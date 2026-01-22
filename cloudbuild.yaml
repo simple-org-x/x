@@ -33,7 +33,7 @@ dependencies:
   - gitSource:
       repository:
         url: https://github.com/simple-org/y.git
-        developerConnect: projects/lapakgaming-dev/locations/asia-southeast2/connections/simple-org/repositories/simple-org-x-y
+        developerConnect: projects/lapakgaming-dev/locations/asia-southeast2/connections/simple-org/gitRepositoryLinks/simple-org-x-y
       revision: master
       recurseSubmodules: true
       depth: 1
