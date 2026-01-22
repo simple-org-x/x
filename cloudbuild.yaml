@@ -28,13 +28,13 @@ options:
 #   secretManager:
 #     - versionName: projects/523250825015/secrets/github-connection-github-oauthtoken-e16fd9/versions/1
 #       env: "SSH_KEY"
-dependencies:
-  # - repository: "projects/lapakgaming-dev/localtions/global/connections/github-connections/repositories/lapakgaming/ansible"
-  - gitSource:
-      repository:
-        url: https://github.com/simple-org/y.git
-        developerConnect: projects/lapakgaming-dev/locations/asia-southeast2/connections/simple-org/gitRepositoryLinks/simple-org-x-y
-      revision: master
-      recurseSubmodules: true
-      depth: 1
-      destPath: ansible-repo
+# dependencies:
+#   # - repository: "projects/lapakgaming-dev/localtions/global/connections/github-connections/repositories/lapakgaming/ansible"
+#   - gitSource:
+#       repository:
+#         url: https://github.com/simple-org/y.git
+#         developerConnect: projects/lapakgaming-dev/locations/asia-southeast2/connections/simple-org/gitRepositoryLinks/simple-org-x-y
+#       revision: master
+#       recurseSubmodules: true
+#       depth: 1
+#       destPath: ansible-repo
