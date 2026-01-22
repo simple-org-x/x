@@ -10,7 +10,7 @@ steps:
   - name: gcr.io/cloud-builders/git
     args:
       - checkout
-      - master
+      - main
 
   # Docker Build
   # - name: "gcr.io/cloud-builders/docker"
