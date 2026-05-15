@@ -1,0 +1,35 @@
+[package]
+name = "ssh-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Secure local vault for SSH private keys and passwords (Argon2id + AES-256-GCM)"
+license = "MIT"
+
+[dependencies]
+# Authenticated encryption
+aes-gcm = "0.10"
+# Password-based key derivation (memory-hard)
+argon2 = "0.5"
+# Secure RNG
+rand = "0.8"
+# Wipe secrets from memory
+zeroize = { version = "1.7", features = ["derive"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+# Hidden password prompt
+rpassword = "7"
+# Base64 for storing binary blobs in JSON
+base64 = "0.22"
+# Errors
+thiserror = "1"
+anyhow = "1"
+# Locate config dir
+dirs = "5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
