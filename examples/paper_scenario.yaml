@@ -1,0 +1,24 @@
+# Scripted FakeLLM scenario for `dex-ai-trader paper`.
+#
+# Each entry is one LLM call's pre-baked JSON response, in order:
+#   1. Analyst   -> proposes a small BTC long.
+#   2. Reviewer  -> approves.
+#   3. Responsible -> approves.
+#
+# No API keys, no network, fully deterministic.
+symbol: BTC-USD
+mark_price: 30000.0
+initial_cash: 100000.0
+responses:
+  - action: trade
+    venue: paper
+    symbol: BTC-USD
+    side: buy
+    order_type: market
+    size: 0.001
+    rationale: "Demo: small BTC long to validate the end-to-end pipeline."
+    confidence: 0.8
+  - verdict: approve
+    critique: "Sizing is conservative; allowlisted symbol; fits risk envelope."
+  - decision: approve
+    justification: "Aligned with reviewer; size and confidence acceptable."

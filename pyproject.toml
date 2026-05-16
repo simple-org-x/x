@@ -1,0 +1,67 @@
+[project]
+name = "dex-ai-trader"
+version = "0.1.0"
+description = "Multi-agent AI trading system for Hyperliquid and AsterDex DEXes"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "typer>=0.12",
+    "rich>=13.7",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "cryptography>=42",
+    "eth-account>=0.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "black>=24.4",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "respx>=0.21",
+]
+hyperliquid = ["hyperliquid-python-sdk>=0.9"]
+openai = ["openai>=1.40"]
+anthropic = ["anthropic>=0.34"]
+
+[project.scripts]
+dex-ai-trader = "dex_ai_trader.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dex_ai_trader"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+strict = true
+packages = ["dex_ai_trader"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["hyperliquid.*", "eth_account", "eth_account.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

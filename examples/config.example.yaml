@@ -1,0 +1,53 @@
+# WARNING: live: true puts REAL FUNDS at risk. Default is dry_run: true.
+# See README.md "Running: paper, dry-run, live" for the full two-step opt-in.
+#
+# Copy this file to a private location, edit, and pass to:
+#   dex-ai-trader run --config /path/to/your-config.yaml
+#
+# Environment overrides use prefix DEX_AI_ with __ as the nested delimiter,
+# e.g. DEX_AI_RISK__MAX_LEVERAGE=5
+
+# See README.md "Configuring the LLM provider" for provider extras and API keys.
+# This block is uncommented so a user copying the file verbatim and running
+# `dex-ai-trader run --config ...` executes a complete cycle. Switch the
+# provider to `openai` or `anthropic` once you've installed the matching extra
+# (`uv sync --extra openai` / `uv sync --extra anthropic`) and exported
+# OPENAI_API_KEY / ANTHROPIC_API_KEY (or stored a credential under that venue).
+llm:
+  provider: openai          # one of: fake, openai, anthropic
+  model: gpt-4o-mini
+  temperature: 0.2
+  base_url: null
+
+# See README.md "One-time DEX connection wizard" for venue setup. The default
+# `paper` venue runs against the in-process simulator; switch to hyperliquid
+# or asterdex once you have run `dex-ai-trader connect <venue>`.
+venue:
+  name: paper             # one of: hyperliquid, asterdex, paper
+  testnet: true
+  account_address: null
+
+# See README.md "Risk controls" for tuning guidance.
+risk:
+  max_notional_usd: 1000.0
+  max_leverage: 3.0
+  symbol_allowlist:
+    - BTC-USD
+    - ETH-USD
+  daily_loss_cap_usd: 200.0
+  min_confidence: 0.55
+
+# See README.md "Running: paper, dry-run, live" for paper / dry-run / live modes.
+run:
+  poll_interval_s: 60
+  symbols:
+    - BTC-USD
+  dry_run: true           # default; set to false ONLY when going live
+  live: false             # explicit live-trading switch (also requires --live flag)
+
+# Live-trading section is intentionally COMMENTED OUT. Uncomment AND set
+# run.dry_run=false, run.live=true, and venue.name to a real venue (NOT paper)
+# only when you genuinely want to place real orders. The CLI also requires the
+# --live flag at invocation time.
+# credentials:
+#   live: true              # MUST be true (in addition to run.live) for live trading
