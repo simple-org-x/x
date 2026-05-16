@@ -15,6 +15,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,14 @@ const (
 	silenceTimeout = 30 * time.Second
 	// readMessageBudget caps single-message size to discourage abuse.
 	readMessageBudget = 64 * 1024
+	// authSubprotocolPrefix is the per-connection subprotocol token
+	// scheme: clients negotiate ["cas.auth.jwt.<jwt>", "cas.v1"] so
+	// the JWT travels in the Sec-WebSocket-Protocol header rather
+	// than the URL query string. See Handler for details.
+	authSubprotocolPrefix = "cas.auth.jwt."
+	// baseSubprotocol is the protocol the server acks back to the
+	// client once the auth subprotocol has been validated.
+	baseSubprotocol = "cas.v1"
 )
 
 // Hub manages WS connections, grouped by match ID. Connections are
@@ -59,10 +69,14 @@ func NewHub(logger *slog.Logger) *Hub {
 func (h *Hub) Register(c *Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	room, ok := h.rooms[c.matchID]
+	h.registerLocked(c, c.matchID)
+}
+
+func (h *Hub) registerLocked(c *Conn, matchID string) {
+	room, ok := h.rooms[matchID]
 	if !ok {
 		room = make(map[*Conn]struct{})
-		h.rooms[c.matchID] = room
+		h.rooms[matchID] = room
 	}
 	room[c] = struct{}{}
 }
@@ -96,6 +110,27 @@ func (h *Hub) Broadcast(matchID string, payload any) {
 	}
 }
 
+// rebind moves a connection from its current room to a new matchID,
+// keying the room map by the new value so Unregister can find it
+// later. This closes the "room leak on join" hole where a connection
+// upgraded with ?match=A and then sent {type:join,matchId:B} ended up
+// referenced from room A but unregistered against room B.
+func (h *Hub) rebind(c *Conn, newMatchID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if c.matchID == newMatchID {
+		return
+	}
+	if room, ok := h.rooms[c.matchID]; ok {
+		delete(room, c)
+		if len(room) == 0 {
+			delete(h.rooms, c.matchID)
+		}
+	}
+	c.matchID = newMatchID
+	h.registerLocked(c, newMatchID)
+}
+
 // Conn wraps a single WS connection plus its identity.
 type Conn struct {
 	ws      *websocket.Conn
@@ -124,17 +159,75 @@ func (c *Conn) Close(code websocket.StatusCode, reason string) {
 	})
 }
 
+// originPatterns derives the OriginPatterns slice for the websocket
+// Accept call from the same allowed-origins list HTTP CORS uses. The
+// coder/websocket library matches against the Host portion of the
+// Origin header (with optional :port and wildcards), so we strip the
+// scheme and hand it the host pattern.
+//
+// Returns nil if allowedOrigins is empty: callers should treat that as
+// "no cross-origin upgrades allowed", which the coder/websocket
+// library enforces by default when InsecureSkipVerify is false.
+func originPatterns(allowedOrigins []string) []string {
+	out := make([]string, 0, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		if o == "*" {
+			out = append(out, "*")
+			continue
+		}
+		if u, err := url.Parse(o); err == nil && u.Host != "" {
+			out = append(out, u.Host)
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// extractSubprotocolToken pulls the JWT from the Sec-WebSocket-Protocol
+// header. Browsers serialise the request as an array, so we accept any
+// of "cas.auth.jwt.<jwt>" tokens in the comma-separated list. Returns
+// "" when no auth subprotocol is offered.
+func extractSubprotocolToken(r *http.Request) string {
+	for _, hdr := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, part := range strings.Split(hdr, ",") {
+			p := strings.TrimSpace(part)
+			if strings.HasPrefix(p, authSubprotocolPrefix) {
+				return strings.TrimPrefix(p, authSubprotocolPrefix)
+			}
+		}
+	}
+	return ""
+}
+
 // Handler returns an http.Handler that serves /ws. The handler:
-//   - upgrades the request,
-//   - authenticates via JWT (Authorization header or ?access_token=),
+//   - extracts a JWT from the Sec-WebSocket-Protocol header
+//     (cas.auth.jwt.<jwt> followed by the base subprotocol),
+//   - validates it before upgrading,
+//   - upgrades with an explicit OriginPatterns derived from
+//     cfg.AllowedOrigins so cross-origin upgrades are refused,
 //   - reads the first message as {type:"join", matchId:"..."} or pulls
 //     matchID from ?match=...,
 //   - registers the connection with the Hub and the MatchRunner,
 //   - pumps inputs and outputs until either side closes.
-func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub) http.Handler {
+func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub, allowedOrigins []string) http.Handler {
+	patterns := originPatterns(allowedOrigins)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Authenticate before upgrading: failure is a plain HTTP 401.
-		tok := auth.Bearer(r)
+		// We deliberately do NOT read ?access_token=: tokens in the
+		// query string leak into proxy/CDN access logs and Referer
+		// headers, so the handshake uses Sec-WebSocket-Protocol
+		// instead. Authorization: Bearer is still accepted for
+		// non-browser clients (curl, integration tests, internal
+		// services) that can set headers freely.
+		tok := extractSubprotocolToken(r)
+		if tok == "" {
+			tok = bearerHeader(r)
+		}
 		if tok == "" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
 			return
@@ -145,12 +238,20 @@ func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub) ht
 			return
 		}
 
-		// Allow the Vite dev server to connect from a browser. The
-		// HTTP CORS middleware already restricts the API surface; for
-		// the WS handshake we trust the same origin list. coder's
-		// websocket library wants a slice of allowed hosts.
+		// OriginPatterns is the explicit allowlist of Host headers
+		// the WS handshake will accept Origin from. Mirrors the
+		// HTTP CORS allowlist; "*" entries widen the allowlist if
+		// (and only if) operators have set CORS_ALLOWED_ORIGINS=*.
 		opts := &websocket.AcceptOptions{
-			InsecureSkipVerify: true,
+			OriginPatterns: patterns,
+		}
+		// Subprotocol negotiation: if the client offered a token via
+		// Sec-WebSocket-Protocol, ack the base subprotocol so the
+		// browser's WebSocket constructor sees a successful
+		// negotiation. Skipping this would leave .protocol empty and
+		// some browsers terminate the upgrade.
+		if extractSubprotocolToken(r) != "" {
+			opts.Subprotocols = []string{baseSubprotocol}
 		}
 		ws, err := websocket.Accept(w, r, opts)
 		if err != nil {
@@ -180,8 +281,26 @@ func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub) ht
 		// Reader pump: parses input frames and routes them to the
 		// MatchRunner. Returns when the peer closes or the deadline
 		// elapses.
-		readerLoop(ctx, c, runner, hub.logger)
+		readerLoop(ctx, c, runner, hub, hub.logger)
 	})
+}
+
+// bearerHeader extracts an Authorization: Bearer <token> token. Unlike
+// auth.Bearer, it deliberately ignores the access_token query string
+// to keep WS authentication off the URL line.
+func bearerHeader(r *http.Request) string {
+	a := r.Header.Get("Authorization")
+	if a == "" {
+		return ""
+	}
+	parts := strings.SplitN(a, " ", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	if !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 // inboundMessage is the union of WS messages we accept from the client.
@@ -192,7 +311,7 @@ type inboundMessage struct {
 	Frame   *gameserver.InputFrame `json:"frame,omitempty"`
 }
 
-func readerLoop(ctx context.Context, c *Conn, runner *gameserver.MatchRunner, logger *slog.Logger) {
+func readerLoop(ctx context.Context, c *Conn, runner *gameserver.MatchRunner, hub *Hub, logger *slog.Logger) {
 	for {
 		readCtx, cancel := context.WithTimeout(ctx, silenceTimeout)
 		typ, data, err := c.ws.Read(readCtx)
@@ -213,7 +332,10 @@ func readerLoop(ctx context.Context, c *Conn, runner *gameserver.MatchRunner, lo
 		switch msg.Type {
 		case "join":
 			if msg.MatchID != "" {
-				c.matchID = msg.MatchID
+				// Rebind through the hub so Unregister still finds
+				// the connection in the right room when it closes.
+				// Without this, the old room entry leaks forever.
+				hub.rebind(c, msg.MatchID)
 			}
 		case "input":
 			if msg.Frame == nil {
@@ -223,7 +345,11 @@ func readerLoop(ctx context.Context, c *Conn, runner *gameserver.MatchRunner, lo
 				continue
 			}
 			if m, ok := runner.Lookup(c.matchID); ok {
-				m.SubmitInput(*msg.Frame)
+				// Bind the authenticated user id to the frame and
+				// reject inputs from connections whose user id is
+				// not part of the match. SubmitInputFor enforces
+				// both invariants atomically.
+				m.SubmitInputFor(c.userID, *msg.Frame)
 			}
 		}
 	}

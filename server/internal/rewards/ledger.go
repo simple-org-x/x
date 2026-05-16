@@ -188,8 +188,9 @@ func (l *MemoryLedger) Claim(userID, txID string) (Distribution, error) {
 //   - Only the top 10% of finishers (rounded up, minimum 1) earn payouts.
 //   - The winner's share decays geometrically across the qualifying
 //     ranks so the curve is "winner takes biggest, runner-up next, ...".
-//   - Total payouts sum to <= pool (rounding rounds down so the house
-//     can never overpay).
+//   - Total payouts sum to EXACTLY pool: any rounding remainder is
+//     added to the rank-1 share so the table satisfies
+//     RewardPool.settle's `sum(shares) == pool` invariant directly.
 //
 // The function is pure; it does not depend on any Ledger state.
 func DistributionTable(pool int64, ranking []string) []Distribution {
@@ -231,7 +232,12 @@ func DistributionTable(pool int64, ranking []string) []Distribution {
 			Amount: amount,
 		})
 	}
-	// Anything lost to rounding stays in the pool; we never overpay.
-	_ = paid
+	// Push the rounding remainder into rank-1 so the table sums to
+	// pool exactly. Without this, RewardPool.settle would revert
+	// with ShareSumMismatch on any pool that does not divide evenly
+	// across the geometric-weight denominator.
+	if remainder := pool - paid; remainder > 0 && len(out) > 0 {
+		out[0].Amount += remainder
+	}
 	return out
 }

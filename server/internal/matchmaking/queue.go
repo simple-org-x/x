@@ -9,6 +9,7 @@ package matchmaking
 
 import (
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -101,6 +102,10 @@ func (q *MemoryQueue) Status(userID string) (QueueEntry, bool) {
 // PopBucket atomically removes up to n entries that share the supplied
 // (mode, region, mmrBucket) coordinates. If fewer than n entries match,
 // the empty slice is returned and the queue is not mutated.
+//
+// Within a bucket, entries are matched in FIFO order by EnqueueAt:
+// the longest-waiting players take priority over fresher arrivals.
+// This guarantees fairness across map iteration randomness.
 func (q *MemoryQueue) PopBucket(mode, region string, mmrBucket, n int) []QueueEntry {
 	if n <= 0 {
 		return nil
@@ -108,7 +113,9 @@ func (q *MemoryQueue) PopBucket(mode, region string, mmrBucket, n int) []QueueEn
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	matched := make([]QueueEntry, 0, n)
+	// Collect every candidate first so we can sort them deterministically;
+	// only after we know we have at least n do we mutate the queue.
+	candidates := make([]QueueEntry, 0)
 	for _, e := range q.entries {
 		if e.Mode != mode || e.Region != region {
 			continue
@@ -116,14 +123,17 @@ func (q *MemoryQueue) PopBucket(mode, region string, mmrBucket, n int) []QueueEn
 		if MMRBucket(e.MMR) != mmrBucket {
 			continue
 		}
-		matched = append(matched, e)
-		if len(matched) >= n {
-			break
-		}
+		candidates = append(candidates, e)
 	}
-	if len(matched) < n {
+	if len(candidates) < n {
 		return nil
 	}
+	// FIFO: oldest EnqueueAt wins. Stable sort preserves insertion
+	// order when EnqueueAt happens to be equal (clock resolution).
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].EnqueueAt.Before(candidates[j].EnqueueAt)
+	})
+	matched := candidates[:n]
 	for _, e := range matched {
 		delete(q.entries, e.UserID)
 	}

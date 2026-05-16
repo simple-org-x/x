@@ -32,6 +32,12 @@ type InputFrame struct {
 	Seq int64   `json:"seq"` // monotonically increasing client sequence
 	Dir Vector2 `json:"dir"`
 	TS  int64   `json:"ts"` // client clock, ms since epoch (lag detection)
+	// UserID is the authenticated identity that produced this frame.
+	// The realtime layer fills this in from the WebSocket connection;
+	// clients do not (and cannot meaningfully) supply it. Match.loop
+	// uses it to dedup per-user sequence numbers and to reject inputs
+	// from anyone not in Match.Players.
+	UserID string `json:"-"`
 }
 
 // Vector2 is a 2D direction or position.
@@ -63,12 +69,13 @@ type Match struct {
 	Players   []string
 	StartedAt time.Time
 
-	mu      sync.Mutex
-	closed  bool
-	cancel  context.CancelFunc
-	state   WorldState
-	inputs  chan InputFrame
-	outputs chan WorldState
+	mu            sync.Mutex
+	closed        bool
+	cancel        context.CancelFunc
+	state         WorldState
+	inputs        chan InputFrame
+	outputs       chan WorldState
+	lastSeqByUser map[string]int64
 }
 
 // MatchRunner spawns and supervises per-match goroutines.
@@ -155,6 +162,10 @@ func (r *MatchRunner) EndAll() {
 // SubmitInput pushes a frame onto the match's input channel after
 // validation and clamping. Frames that would block the channel are
 // dropped (anti-cheat: a flooding client cannot slow the server).
+//
+// Callers that know the authenticated user id should prefer
+// SubmitInputFor; this entry point exists for tests and for any path
+// that has already populated f.UserID.
 func (m *Match) SubmitInput(f InputFrame) {
 	clamped := ClampInput(f)
 	select {
@@ -163,6 +174,28 @@ func (m *Match) SubmitInput(f InputFrame) {
 		// Drop on full buffer; the next tick will reuse the last
 		// known direction in m.state.
 	}
+}
+
+// SubmitInputFor binds an InputFrame to a specific authenticated user
+// id and submits it. Frames whose userID is not in Match.Players are
+// silently dropped: the realtime layer is responsible for closing the
+// connection, but the runner refuses to mix inputs across identities.
+func (m *Match) SubmitInputFor(userID string, f InputFrame) {
+	if userID == "" {
+		return
+	}
+	allowed := false
+	for _, p := range m.Players {
+		if p == userID {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return
+	}
+	f.UserID = userID
+	m.SubmitInput(f)
 }
 
 // Outputs returns the read side of the world-state broadcast channel.
@@ -210,11 +243,17 @@ func (m *Match) loop(ctx context.Context) {
 		case f := <-m.inputs:
 			// Drop out-of-order frames per user; this is the seam
 			// where authoritative resimulation would go in Phase 2.
-			user := "" // unknown until WS layer attaches identity
+			user := f.UserID
 			if last, ok := seqByUser[user]; ok && f.Seq <= last {
 				continue
 			}
 			seqByUser[user] = f.Seq
+			m.mu.Lock()
+			if m.lastSeqByUser == nil {
+				m.lastSeqByUser = make(map[string]int64)
+			}
+			m.lastSeqByUser[user] = f.Seq
+			m.mu.Unlock()
 		case <-tick.C:
 			m.mu.Lock()
 			m.state.Tick++
@@ -229,6 +268,19 @@ func (m *Match) loop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// LastSeqFor returns the most recently observed input sequence for
+// userID, or 0 if no input has been ingested yet. Exposed for tests
+// that exercise the per-user dedup boundary; production code does
+// not consume this.
+func (m *Match) LastSeqFor(userID string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastSeqByUser == nil {
+		return 0
+	}
+	return m.lastSeqByUser[userID]
 }
 
 // ClampInput sanitizes an InputFrame: it normalizes the direction

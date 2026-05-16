@@ -110,34 +110,93 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// IPRateLimiter is a per-IP token-bucket pool. It is intentionally
-// minimal: buckets never expire, which is fine for a Phase-1 process
-// that is recycled when CIDR pressure becomes a concern.
+// IPRateLimiter is a per-IP token-bucket pool. Inactive buckets are
+// evicted on a periodic sweep so a flood of unique source addresses
+// (in particular IPv6 prefix rotation) cannot grow the map without
+// bound. Call StartJanitor to spin up the sweeper goroutine; tests
+// can drive eviction manually via Sweep.
 type IPRateLimiter struct {
 	mu      sync.Mutex
-	buckets map[string]*rate.Limiter
+	buckets map[string]*rateBucket
 	rps     rate.Limit
 	burst   int
+	now     func() time.Time
+	idleTTL time.Duration
 }
+
+type rateBucket struct {
+	limiter *rate.Limiter
+	lastUse time.Time
+}
+
+// DefaultRateLimiterIdleTTL is how long a bucket can sit unused before
+// the next sweep evicts it. 10 minutes is plenty of headroom for a
+// real client that pauses between requests, while short enough that
+// an attacker rotating addresses cannot build up a permanent map.
+const DefaultRateLimiterIdleTTL = 10 * time.Minute
 
 // NewIPRateLimiter builds a token-bucket pool keyed by client IP.
 func NewIPRateLimiter(rps float64, burst int) *IPRateLimiter {
 	return &IPRateLimiter{
-		buckets: make(map[string]*rate.Limiter),
+		buckets: make(map[string]*rateBucket),
 		rps:     rate.Limit(rps),
 		burst:   burst,
+		now:     time.Now,
+		idleTTL: DefaultRateLimiterIdleTTL,
 	}
 }
 
 func (l *IPRateLimiter) limiterFor(ip string) *rate.Limiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lim, ok := l.buckets[ip]
+	b, ok := l.buckets[ip]
 	if !ok {
-		lim = rate.NewLimiter(l.rps, l.burst)
-		l.buckets[ip] = lim
+		b = &rateBucket{limiter: rate.NewLimiter(l.rps, l.burst)}
+		l.buckets[ip] = b
 	}
-	return lim
+	b.lastUse = l.now()
+	return b.limiter
+}
+
+// Sweep evicts buckets whose lastUse is older than idleTTL. Safe to
+// call from a janitor goroutine or directly from tests.
+func (l *IPRateLimiter) Sweep() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := l.now().Add(-l.idleTTL)
+	for ip, b := range l.buckets {
+		if b.lastUse.Before(cutoff) {
+			delete(l.buckets, ip)
+		}
+	}
+}
+
+// StartJanitor spins up a goroutine that calls Sweep every interval
+// until ctx is cancelled. Returns immediately. Calling more than once
+// per IPRateLimiter is harmless but redundant.
+func (l *IPRateLimiter) StartJanitor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = l.idleTTL / 2
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				l.Sweep()
+			}
+		}
+	}()
+}
+
+// Size returns the current number of tracked buckets. Test helper.
+func (l *IPRateLimiter) Size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.buckets)
 }
 
 // Middleware returns an http middleware that 429s clients exceeding

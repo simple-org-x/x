@@ -100,7 +100,7 @@ func Build(d Deps) chi.Router {
 		mmH := matchmaking.Handlers{Service: d.Matchmaking}
 		api.Mount("/api/matchmaking", mmH.Routes())
 
-		gsH := gameserver.Handlers{Runner: d.Runner, Matchmaking: d.Matchmaking}
+		gsH := gameserver.Handlers{Runner: d.Runner, Matchmaking: d.Matchmaking, Broadcaster: d.Hub}
 		api.Mount("/api/match", gsH.Routes())
 
 		rwH := rewards.Handlers{Ledger: d.Ledger}
@@ -109,7 +109,7 @@ func Build(d Deps) chi.Router {
 
 	// /ws does its own JWT check (the chi auth middleware would 401
 	// before we can upgrade the connection cleanly).
-	r.Handle("/ws", realtime.Handler(d.AuthService, d.Runner, d.Hub))
+	r.Handle("/ws", realtime.Handler(d.AuthService, d.Runner, d.Hub, d.Config.AllowedOrigins))
 
 	return r
 }

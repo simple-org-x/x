@@ -121,18 +121,25 @@ func (h Handlers) WalletVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Bearer extracts a JWT from the Authorization header (Bearer scheme)
-// or from the access_token query parameter (used by the WS handshake).
+// Bearer extracts a JWT from the Authorization header (Bearer scheme).
 // Returns "" if no token is present.
+//
+// Tokens are deliberately not accepted via the access_token query
+// parameter: query strings leak into reverse-proxy and CDN access
+// logs, into Referer headers on subresource fetches, and into browser
+// history. The WS handshake passes its JWT via the
+// Sec-WebSocket-Protocol header (see realtime.Handler) for the same
+// reason.
 func Bearer(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
-	if auth != "" {
-		parts := strings.SplitN(auth, " ", 2)
-		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			return strings.TrimSpace(parts[1])
-		}
+	if auth == "" {
+		return ""
 	}
-	return r.URL.Query().Get("access_token")
+	parts := strings.SplitN(auth, " ", 2)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
 }
 
 // Middleware enforces a valid JWT and stashes the parsed claims in

@@ -39,20 +39,40 @@ func TestDistributionTable_WinnerLargestShare(t *testing.T) {
 	}
 }
 
-func TestDistributionTable_DoesNotOverpay(t *testing.T) {
+func TestDistributionTable_SumsToPoolExactly(t *testing.T) {
+	// RewardPool.settle requires sum(shares) == pool exactly. The
+	// table now adds any rounding remainder to rank-1 so this holds
+	// for every pool size, including ones that do not divide evenly
+	// across the geometric-weight denominator.
 	for _, n := range []int{1, 10, 100, 537} {
 		ranking := make([]string, n)
 		for i := range ranking {
 			ranking[i] = fmt.Sprintf("p%d", i)
 		}
-		const pool int64 = 1_234_567
-		dist := rewards.DistributionTable(pool, ranking)
-		var sum int64
-		for _, d := range dist {
-			sum += d.Amount
+		// Mix of round and pathological pool sizes to exercise the
+		// remainder path.
+		for _, pool := range []int64{1, 2, 7, 1000, 1_000_000, 1_234_567, 999_999_999_999} {
+			dist := rewards.DistributionTable(pool, ranking)
+			var sum int64
+			for _, d := range dist {
+				sum += d.Amount
+			}
+			assert.Equalf(t, pool, sum,
+				"n=%d pool=%d: distribution must sum to pool exactly", n, pool)
 		}
-		assert.LessOrEqualf(t, sum, pool, "n=%d: distribution must sum to <= pool", n)
 	}
+}
+
+func TestDistributionTable_RemainderGoesToRank1(t *testing.T) {
+	// The rounding remainder is folded into rank-1 (the largest
+	// share already), so the winner's amount is always at least the
+	// floor-rounded geometric share. This pins down the placement of
+	// the remainder so future refactors do not silently move it.
+	ranking := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} // top=1
+	dist := rewards.DistributionTable(7, ranking)
+	require.Len(t, dist, 1)
+	assert.Equal(t, int64(7), dist[0].Amount,
+		"single-payout case: rank-1 absorbs the entire pool including rounding")
 }
 
 func TestDistributionTable_RoundsUpToAtLeastOnePayout(t *testing.T) {

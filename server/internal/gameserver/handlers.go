@@ -15,6 +15,17 @@ import (
 type Handlers struct {
 	Runner      *MatchRunner
 	Matchmaking *matchmaking.Service // optional, used to populate /match/{id}
+	// Broadcaster is an optional sink for per-tick WorldState
+	// snapshots. When set, Start spawns a fan-out goroutine for the
+	// new match that drains m.Outputs() and forwards each snapshot
+	// via Broadcast. realtime.Hub satisfies this interface.
+	Broadcaster Broadcaster
+}
+
+// Broadcaster is the seam Handlers uses to publish per-tick world
+// state snapshots without importing the realtime package.
+type Broadcaster interface {
+	Broadcast(matchID string, payload any)
 }
 
 // Routes returns a subrouter for /api/match/*.
@@ -56,6 +67,17 @@ func (h Handlers) Start(w http.ResponseWriter, r *http.Request) {
 		req.Players = []string{claims.Subject}
 	}
 	m := h.Runner.Start(context.Background(), req.MatchID, req.Players)
+	if h.Broadcaster != nil {
+		// Fan-out goroutine: drain the per-match WorldState channel
+		// and publish each tick to every connection in the hub's
+		// room for this match. The channel closes when the runner
+		// ends the match, which terminates this goroutine cleanly.
+		go func(matchID string, out <-chan WorldState) {
+			for snap := range out {
+				h.Broadcaster.Broadcast(matchID, snap)
+			}
+		}(m.ID, m.Outputs())
+	}
 	if h.Matchmaking != nil {
 		h.Matchmaking.RegisterMatch(matchmaking.Match{
 			ID:      m.ID,

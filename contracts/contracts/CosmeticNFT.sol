@@ -34,6 +34,12 @@ contract CosmeticNFT is ERC1155Supply, AccessControl {
     bytes32 public constant CATEGORY_VISUAL_EFFECT = keccak256("visual_effect");
 
     /// @notice Category for a given token id (encoded as keccak256(name)).
+    /// @dev    The category label is an opaque tag for off-chain
+    ///         tooling. The contract itself does NOT interpret it; the
+    ///         anti pay-to-win invariant is enforced at the off-chain
+    ///         boundary (client + indexer code MUST NOT translate any
+    ///         on-chain field, including this category, into in-game
+    ///         stat changes). See the contract-level NatSpec above.
     mapping(uint256 => bytes32) public categoryOf;
 
     /// @notice Optional per-id URI override that takes precedence over the base URI.
@@ -48,11 +54,18 @@ contract CosmeticNFT is ERC1155Supply, AccessControl {
     error CategoryMismatch();
     error LengthMismatch();
     error ZeroAddress();
+    error EmptyBaseURI();
 
     constructor(string memory baseURI, address admin)
         ERC1155(baseURI)
     {
         if (admin == address(0)) revert ZeroAddress();
+        // A blank base URI would make uri(id) return "" for any id
+        // without a per-id override, breaking the standard ERC-1155
+        // expectation that holders can resolve metadata. The deployer
+        // can still set a placeholder ("ipfs://placeholder/") at deploy
+        // time and update it later via setBaseURI.
+        if (bytes(baseURI).length == 0) revert EmptyBaseURI();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(MINTER_ROLE, admin);
         _grantRole(URI_SETTER_ROLE, admin);
@@ -100,7 +113,13 @@ contract CosmeticNFT is ERC1155Supply, AccessControl {
     // ---------------------------------------------------------------------
 
     /// @notice Update the base URI used when no per-id override is set.
+    /// @dev    Reverts on an empty string: callers wanting to "clear"
+    ///         the base must instead supply a placeholder. This keeps
+    ///         uri(id) from ever returning "" once at least one mint
+    ///         has occurred, which would violate the ERC-1155
+    ///         expectation that token metadata is always resolvable.
     function setBaseURI(string calldata newBaseURI) external onlyRole(URI_SETTER_ROLE) {
+        if (bytes(newBaseURI).length == 0) revert EmptyBaseURI();
         _setURI(newBaseURI);
         emit BaseURIUpdated(newBaseURI);
     }

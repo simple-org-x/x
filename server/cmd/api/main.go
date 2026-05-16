@@ -18,7 +18,14 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		// Hard-fail before logging so an unprivileged operator gets
+		// a clear stderr message even when stdout JSON logging is
+		// not configured yet.
+		_, _ = os.Stderr.WriteString("config_error: " + err.Error() + "\n")
+		os.Exit(2)
+	}
 
 	level := parseLogLevel(cfg.LogLevel)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
@@ -26,6 +33,12 @@ func main() {
 
 	deps := httpapi.NewDeps(cfg, logger)
 	router := httpapi.Build(deps)
+
+	// Start the per-IP rate-limiter sweeper so its bucket map cannot
+	// grow unboundedly under address rotation.
+	janitorCtx, janitorCancel := context.WithCancel(context.Background())
+	defer janitorCancel()
+	deps.RateLimiter.StartJanitor(janitorCtx, 0)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddrNormalized(),

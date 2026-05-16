@@ -109,6 +109,27 @@ describe("CosmeticNFT", () => {
       expect(await nft.uri(99)).to.equal("ipfs://newbase/99");
     });
 
+    it("constructor reverts when base URI is empty", async () => {
+      const Factory = await ethers.getContractFactory("CosmeticNFT");
+      await expect(
+        Factory.deploy("", admin.address)
+      ).to.be.revertedWithCustomError(nft, "EmptyBaseURI");
+    });
+
+    it("setBaseURI reverts on an empty string", async () => {
+      await expect(
+        nft.connect(admin).setBaseURI("")
+      ).to.be.revertedWithCustomError(nft, "EmptyBaseURI");
+    });
+
+    it("uri(id) is non-empty after the first mint", async () => {
+      await nft.connect(minter).mint(user.address, 123, 1, CATEGORY_SKIN, "0x");
+      const u = await nft.uri(123);
+      expect(u.length).to.be.greaterThan(0);
+      // And the base URI we deployed with is the prefix.
+      expect(u.startsWith(BASE_URI)).to.equal(true);
+    });
+
     it("reverts when a non-uri-setter tries to update URIs", async () => {
       await expect(
         nft.connect(outsider).setBaseURI("ipfs://nope/")

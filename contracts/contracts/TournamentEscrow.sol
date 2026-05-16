@@ -199,7 +199,9 @@ contract TournamentEscrow is AccessControl, ReentrancyGuard, EIP712 {
         uint256[] memory payouts = new uint256[](winners.length);
         uint256 distributed;
         for (uint256 i = 0; i < winners.length; i++) {
-            // Rounding goes to the leader to keep sum(payouts) == pool.
+            // Rounding goes to the last-ranked winner so the
+            // top-of-podium share matches the configured weight
+            // exactly, while sum(payouts) still equals pool.
             uint256 amount = i == winners.length - 1
                 ? pool - distributed
                 : (pool * shares[i]) / weightSum;

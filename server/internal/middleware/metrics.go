@@ -44,7 +44,8 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 // Middleware returns an http middleware that increments
 // cas_http_requests_total for every request it sees. The path label
 // is the chi route template (e.g. /api/match/{id}) when available,
-// falling back to the raw URL path so unmatched routes still register.
+// falling back to the constant "unmatched" so 404 traffic cannot
+// drive an unbounded label set.
 func (m *Metrics) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w}
@@ -55,7 +56,10 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 		}
 		path := chiRoutePattern(r)
 		if path == "" {
-			path = r.URL.Path
+			// chi did not match a route; collapse all such requests
+			// to a single label value so a /wp-admin / /.git / 404
+			// scanner cannot inflate cardinality.
+			path = "unmatched"
 		}
 		m.requestsTotal.WithLabelValues(path, strconv.Itoa(status)).Inc()
 	})

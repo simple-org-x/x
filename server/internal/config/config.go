@@ -5,21 +5,33 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// devJWTSecret is the dev-only fallback signing secret. Load returns
+// an error when APP_ENV != "dev" (or unset) and JWT_SECRET is empty,
+// so production deployments cannot accidentally boot signing tokens
+// with this string.
+const devJWTSecret = "dev-only-insecure-secret-change-me"
+
 // Config is the typed view of all environment-driven settings.
 type Config struct {
+	// AppEnv is the deployment environment label. Anything other than
+	// "dev" forbids the dev-only JWT secret fallback.
+	AppEnv string
+
 	// HTTPAddr is the listen address for the HTTP+WebSocket server,
 	// formatted as ":8080" or "127.0.0.1:8080".
 	HTTPAddr string
 
-	// JWTSecret is the HS256 signing secret. A randomized fallback is
-	// used in dev so the server still boots without env, but logs warn
-	// loudly: rotating secrets between restarts invalidates issued JWTs.
+	// JWTSecret is the HS256 signing secret. In dev (APP_ENV=dev or
+	// unset) a hardcoded fallback is used so `go run ./cmd/api`
+	// boots without env. In every other environment Load refuses to
+	// return without an explicit, non-empty JWT_SECRET.
 	JWTSecret []byte
 
 	// AllowedOrigins is the CORS allowlist. Default is the Vite dev
@@ -48,13 +60,37 @@ type Config struct {
 	PostgresURL string
 }
 
-// Load reads environment variables into a Config. Missing or invalid
-// values fall back to defaults; the function never fails so an operator
-// misconfiguring a single var does not bring the API down.
-func Load() Config {
+// ErrJWTSecretRequired is returned by Load when APP_ENV is not "dev"
+// and JWT_SECRET is unset or empty. Operators must set an explicit
+// secret in any non-dev environment; silently signing JWTs with a
+// hardcoded fallback would make the API trivially forgeable.
+var ErrJWTSecretRequired = errors.New("config: JWT_SECRET is required outside APP_ENV=dev")
+
+// Load reads environment variables into a Config. Most fields fall
+// back to defaults when missing. The exception is JWT_SECRET: outside
+// APP_ENV=dev, an unset or empty JWT_SECRET is a hard error so a
+// misconfigured production cluster cannot boot signing tokens with
+// the well-known dev fallback.
+func Load() (Config, error) {
+	appEnv := strings.ToLower(strings.TrimSpace(envString("APP_ENV", "dev")))
+
+	rawSecret, secretSet := os.LookupEnv("JWT_SECRET")
+	rawSecret = strings.TrimSpace(rawSecret)
+	var jwtSecret []byte
+	switch {
+	case secretSet && rawSecret != "":
+		jwtSecret = []byte(rawSecret)
+	case appEnv == "dev":
+		// Permissive dev fallback; tests rely on this being stable.
+		jwtSecret = []byte(devJWTSecret)
+	default:
+		return Config{}, ErrJWTSecretRequired
+	}
+
 	return Config{
+		AppEnv:         appEnv,
 		HTTPAddr:       envString("HTTP_ADDR", ":"+envString("PORT", "8080")),
-		JWTSecret:      []byte(envString("JWT_SECRET", "dev-only-insecure-secret-change-me")),
+		JWTSecret:      jwtSecret,
 		AllowedOrigins: splitCSV(envString("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
 		RateLimitRPS:   envFloat("RATE_LIMIT_RPS", 20),
 		RateLimitBurst: envInt("RATE_LIMIT_BURST", 40),
@@ -63,7 +99,7 @@ func Load() Config {
 		LogLevel:       envString("LOG_LEVEL", "info"),
 		RedisURL:       os.Getenv("REDIS_URL"),
 		PostgresURL:    os.Getenv("POSTGRES_URL"),
-	}
+	}, nil
 }
 
 // HTTPAddrNormalized ensures the configured listen address always has

@@ -66,3 +66,64 @@ func TestMatchRunner_LookupAfterEnd(t *testing.T) {
 	_, ok := r.Lookup(m.ID)
 	assert.False(t, ok)
 }
+
+// TestSubmitInputFor_RejectsNonPlayer guards the input identity seam
+// from the WS reader: a frame from a connection whose userID is not
+// in Match.Players must be silently dropped, not delivered to the
+// runner's input channel.
+func TestSubmitInputFor_RejectsNonPlayer(t *testing.T) {
+	r := gameserver.NewMatchRunner()
+	m := r.Start(context.Background(), "", []string{"p1", "p2"})
+	defer r.End(m.ID)
+
+	// Drain at least one tick so we know the runner is up.
+	select {
+	case <-m.Outputs():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("runner did not produce a tick")
+	}
+
+	// A foreign userID must not be accepted: LastSeqFor("intruder")
+	// stays at zero even after we submit a frame with a high seq.
+	m.SubmitInputFor("intruder", gameserver.InputFrame{Seq: 999})
+	// Allow a generous window for the runner to drain inputs.
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int64(0), m.LastSeqFor("intruder"),
+		"non-player inputs must not be ingested")
+
+	// Sanity: a legitimate player's input still flows through.
+	m.SubmitInputFor("p1", gameserver.InputFrame{Seq: 7})
+	require.Eventually(t, func() bool {
+		return m.LastSeqFor("p1") == 7
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"legitimate player frames should be ingested")
+}
+
+// TestSubmitInputFor_PerUserDedup proves that SubmitInputFor keys
+// the runner's per-user sequence dedup on the authenticated user
+// rather than a shared empty string. Two distinct users sending
+// monotonic sequences must not interfere with each other.
+func TestSubmitInputFor_PerUserDedup(t *testing.T) {
+	r := gameserver.NewMatchRunner()
+	m := r.Start(context.Background(), "", []string{"alice", "bob"})
+	defer r.End(m.ID)
+
+	// Drain at least one tick so we know the runner's loop is up.
+	select {
+	case <-m.Outputs():
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("runner did not produce a tick")
+	}
+
+	// Alice sends seq=5; Bob sends seq=4. Under the broken seam (a
+	// shared "" key) Bob's frame would be dropped because 4 <= 5.
+	// Under the fixed seam each user has its own counter, so both
+	// frames are accepted.
+	m.SubmitInputFor("alice", gameserver.InputFrame{Seq: 5})
+	m.SubmitInputFor("bob", gameserver.InputFrame{Seq: 4})
+
+	require.Eventually(t, func() bool {
+		return m.LastSeqFor("alice") == 5 && m.LastSeqFor("bob") == 4
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"both alice and bob frames should be accepted with their own dedup keys")
+}

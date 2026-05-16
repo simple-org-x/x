@@ -296,6 +296,86 @@ describe("RewardPool", () => {
         pool.connect(outsider).adminSweep(MATCH_ID, outsider.address)
       ).to.be.revertedWithCustomError(pool, "AccessControlUnauthorizedAccount");
     });
+
+    it("does not drain another match's pool (cross-match isolation)", async () => {
+      // Match A is the one set up in beforeEach (settled, dust unclaimed).
+      // Stand up an independent match B in the same contract whose
+      // winners are still owed their full pool.
+      const MATCH_B = ethers.id("match-B");
+      await pool
+        .connect(admin)
+        .createMatch(MATCH_B, ZERO_ADDRESS, ENTRY_FEE, MAX_PLAYERS);
+      await pool.connect(player2).deposit(MATCH_B, { value: ENTRY_FEE });
+      await pool.connect(player3).deposit(MATCH_B, { value: ENTRY_FEE });
+      const winnersB = [player2.address, player3.address];
+      const sharesB = [ENTRY_FEE, ENTRY_FEE];
+      const sigB = await signSettlement(pool, signer, MATCH_B, winnersB, sharesB);
+      await pool.connect(outsider).settle(MATCH_B, winnersB, sharesB, sigB);
+
+      // Sweep match A's residual after the delay. This should pull
+      // ENTRY_FEE (match A's share) and leave match B's pool intact.
+      const sweepDelay = await pool.SWEEP_DELAY();
+      await time.increase(Number(sweepDelay) + 1);
+
+      const beforeBal = await ethers.provider.getBalance(outsider.address);
+      await pool.connect(admin).adminSweep(MATCH_ID, outsider.address);
+      const afterBal = await ethers.provider.getBalance(outsider.address);
+      expect(afterBal - beforeBal).to.equal(ENTRY_FEE);
+
+      // Match B's winners can still withdraw their full shares.
+      const before2 = await ethers.provider.getBalance(player2.address);
+      const tx2 = await pool.connect(player2).withdraw(MATCH_B);
+      const rcpt2 = await tx2.wait();
+      const after2 = await ethers.provider.getBalance(player2.address);
+      const gas2 = rcpt2!.gasUsed * rcpt2!.gasPrice;
+      expect(after2 - before2 + gas2).to.equal(ENTRY_FEE);
+
+      const before3 = await ethers.provider.getBalance(player3.address);
+      const tx3 = await pool.connect(player3).withdraw(MATCH_B);
+      const rcpt3 = await tx3.wait();
+      const after3 = await ethers.provider.getBalance(player3.address);
+      const gas3 = rcpt3!.gasUsed * rcpt3!.gasPrice;
+      expect(after3 - before3 + gas3).to.equal(ENTRY_FEE);
+    });
+
+    it("zeros withdrawable for swept winners (post-sweep withdraw fails)", async () => {
+      // The match A winner (player1) deliberately did not withdraw
+      // before the sweep. After adminSweep, their withdrawable slot
+      // must be zero so a late withdraw cannot pull from another
+      // match's pool by accident.
+      const sweepDelay = await pool.SWEEP_DELAY();
+      await time.increase(Number(sweepDelay) + 1);
+
+      expect(await pool.withdrawable(MATCH_ID, player1.address)).to.equal(ENTRY_FEE);
+      await pool.connect(admin).adminSweep(MATCH_ID, outsider.address);
+      expect(await pool.withdrawable(MATCH_ID, player1.address)).to.equal(0n);
+      await expect(pool.connect(player1).withdraw(MATCH_ID))
+        .to.be.revertedWithCustomError(pool, "NothingToWithdraw");
+    });
+
+    it("only sweeps the per-match residual, not the full balance", async () => {
+      // Stage another match B with a deposit that has not yet been
+      // settled. Its full pool sits in the contract balance but
+      // belongs to no winner yet. Sweeping match A must not touch it.
+      const MATCH_B = ethers.id("match-B-residual");
+      await pool
+        .connect(admin)
+        .createMatch(MATCH_B, ZERO_ADDRESS, ENTRY_FEE, MAX_PLAYERS);
+      await pool.connect(player2).deposit(MATCH_B, { value: ENTRY_FEE });
+
+      const sweepDelay = await pool.SWEEP_DELAY();
+      await time.increase(Number(sweepDelay) + 1);
+
+      const beforeBal = await ethers.provider.getBalance(outsider.address);
+      await pool.connect(admin).adminSweep(MATCH_ID, outsider.address);
+      const afterBal = await ethers.provider.getBalance(outsider.address);
+      // Only match A's residual moves -- not the full address(this).balance.
+      expect(afterBal - beforeBal).to.equal(ENTRY_FEE);
+      // Contract still holds match B's pool.
+      expect(
+        await ethers.provider.getBalance(await pool.getAddress())
+      ).to.equal(ENTRY_FEE);
+    });
   });
 
   describe("EIP-712 helpers", () => {

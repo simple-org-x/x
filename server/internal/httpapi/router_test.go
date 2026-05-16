@@ -23,7 +23,11 @@ import (
 
 func newServer(t *testing.T) (*httptest.Server, httpapi.Deps) {
 	t.Helper()
-	cfg := config.Load()
+	// APP_ENV defaults to "dev" so config.Load returns the dev JWT
+	// fallback rather than ErrJWTSecretRequired. Tests then override
+	// JWTSecret to a deterministic value.
+	cfg, err := config.Load()
+	require.NoError(t, err)
 	cfg.JWTSecret = []byte("test-secret")
 	cfg.RateLimitRPS = 1000
 	cfg.RateLimitBurst = 1000

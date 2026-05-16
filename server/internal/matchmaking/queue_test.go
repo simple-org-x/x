@@ -2,6 +2,7 @@ package matchmaking_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,4 +94,41 @@ func TestSquadWaitsUntilFourPlayers(t *testing.T) {
 	require.False(t, final.Queued)
 	require.NotNil(t, final.Match)
 	assert.Len(t, final.Match.Players, 4)
+}
+
+func TestPopBucket_FIFOByEnqueueAt(t *testing.T) {
+	// Within a single (mode, region, mmrBucket) the longest-waiting
+	// players must be matched first. Older entries get a chronologically
+	// earlier EnqueueAt; the queue's matching pass should pick them
+	// regardless of how Go's map iteration randomises insertion order.
+	q := matchmaking.NewMemoryQueue()
+	base := time.Now()
+
+	// Insert ten entries in *random* (relative) order while their
+	// EnqueueAt timestamps step forward predictably. The expected
+	// FIFO outcome is alphabetical (a..j) because we paired the
+	// oldest timestamp with "a".
+	insertOrder := []struct {
+		id  string
+		idx int
+	}{
+		{"e", 4}, {"a", 0}, {"j", 9}, {"c", 2}, {"g", 6},
+		{"b", 1}, {"i", 8}, {"d", 3}, {"f", 5}, {"h", 7},
+	}
+	for _, e := range insertOrder {
+		require.NoError(t, q.Enqueue(matchmaking.QueueEntry{
+			UserID:    e.id,
+			Mode:      matchmaking.ModeDuo,
+			Region:    "us-east",
+			MMR:       1000,
+			EnqueueAt: base.Add(time.Duration(e.idx) * time.Millisecond),
+		}))
+	}
+
+	// Pop two players: the duo formed must be the two oldest, "a" and "b".
+	popped := q.PopBucket(matchmaking.ModeDuo, "us-east",
+		matchmaking.MMRBucket(1000), 2)
+	require.Len(t, popped, 2)
+	assert.Equal(t, "a", popped[0].UserID, "oldest entry must come first")
+	assert.Equal(t, "b", popped[1].UserID, "second-oldest entry must come second")
 }

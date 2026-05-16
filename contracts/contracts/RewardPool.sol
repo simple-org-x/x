@@ -63,6 +63,12 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
         bool created;
         bool settled;
         uint64 settledAt;
+        // residual is the still-owed balance for this specific match.
+        // Decremented on each successful withdraw and on adminSweep.
+        // Crucially, adminSweep is bounded by this value (rather than
+        // address(this).balance), so sweeping match A's dust cannot
+        // drain funds that belong to match B's winners.
+        uint256 residual;
     }
 
     /// @notice matchId -> match metadata.
@@ -73,6 +79,12 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
 
     /// @notice (matchId, player) -> true if the player already deposited.
     mapping(bytes32 => mapping(address => bool)) public hasDeposited;
+
+    /// @notice winners[matchId] is the list of addresses with non-zero
+    ///         withdrawable balances after settle. Used by adminSweep
+    ///         to zero each winner's slot so a post-sweep withdraw
+    ///         cannot pull from a different match's pool.
+    mapping(bytes32 => address[]) private _winners;
 
     event MatchCreated(
         bytes32 indexed matchId,
@@ -204,9 +216,20 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
 
         m.settled = true;
         m.settledAt = uint64(block.timestamp);
+        // Residual tracks what is still owed for this specific match.
+        // Each successful withdraw decrements it; adminSweep is
+        // bounded by this value rather than the contract's full
+        // balance, so dust from one match cannot drain another.
+        m.residual = sum;
 
         for (uint256 i = 0; i < winners.length; i++) {
             withdrawable[matchId][winners[i]] += shares[i];
+            // Track winners for the post-settlement zeroing pass in
+            // adminSweep. Duplicate addresses are allowed by EVM
+            // semantics (the withdrawable[] mapping already handles
+            // duplicates by accumulation); pushing them here is a
+            // no-op as far as the zero-out loop is concerned.
+            _winners[matchId].push(winners[i]);
         }
 
         emit Settled(matchId, winners, shares);
@@ -219,6 +242,17 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
         withdrawable[matchId][msg.sender] = 0;
 
         Match storage m = _matches[matchId];
+        // Decrement residual so adminSweep observes the correct
+        // remaining balance for this specific match.
+        if (amount > m.residual) {
+            // Defensive: should never happen given settle's accounting,
+            // but caps the residual at zero to prevent an underflow
+            // panic if invariants ever drift.
+            m.residual = 0;
+        } else {
+            m.residual -= amount;
+        }
+
         if (m.token == address(0)) {
             (bool ok, ) = payable(msg.sender).call{value: amount}("");
             require(ok, "RewardPool: native transfer failed");
@@ -234,6 +268,14 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
      *         Callable only by ADMIN_ROLE and only after `SWEEP_DELAY`
      *         has elapsed since settlement. Intended for permanently
      *         lost-key dust, not as a discretionary clawback.
+     *
+     *         Bounded by the per-match `residual` (NOT the contract's
+     *         full balance), so sweeping match A cannot drain funds
+     *         that belong to match B's winners. Each winner's
+     *         withdrawable slot for this match is zeroed in the same
+     *         transaction so a winner who later surfaces with their
+     *         key gets `NothingToWithdraw` instead of pulling from
+     *         another match's pool.
      */
     function adminSweep(bytes32 matchId, address to) external onlyRole(ADMIN_ROLE) nonReentrant {
         if (to == address(0)) revert ZeroAddress();
@@ -242,15 +284,22 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
         if (!m.settled) revert MatchNotSettled();
         if (block.timestamp < uint256(m.settledAt) + SWEEP_DELAY) revert SweepTooEarly();
 
-        uint256 amount;
+        uint256 amount = m.residual;
+        if (amount == 0) revert NothingToWithdraw();
+        // Zero residual and every winner's withdrawable slot before
+        // the external call (CEI). This guarantees a post-sweep
+        // withdraw call from a winner reverts with NothingToWithdraw
+        // rather than draining from another match's pool.
+        m.residual = 0;
+        address[] storage winners = _winners[matchId];
+        for (uint256 i = 0; i < winners.length; i++) {
+            withdrawable[matchId][winners[i]] = 0;
+        }
+
         if (m.token == address(0)) {
-            amount = address(this).balance;
-            if (amount == 0) revert NothingToWithdraw();
             (bool ok, ) = payable(to).call{value: amount}("");
             require(ok, "RewardPool: native sweep failed");
         } else {
-            amount = IERC20(m.token).balanceOf(address(this));
-            if (amount == 0) revert NothingToWithdraw();
             IERC20(m.token).safeTransfer(to, amount);
         }
 

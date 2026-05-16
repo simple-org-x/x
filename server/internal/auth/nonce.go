@@ -33,16 +33,24 @@ type NonceStore interface {
 // goroutine keeps the table from growing unboundedly under steady
 // no-op traffic.
 type MemoryNonceStore struct {
-	mu      sync.Mutex
-	entries map[string]nonceEntry
-	ttl     time.Duration
-	now     func() time.Time
+	mu          sync.Mutex
+	entries     map[string]nonceEntry
+	ttl         time.Duration
+	now         func() time.Time
+	maxAttempts int
 }
 
 type nonceEntry struct {
 	value     string
 	expiresAt time.Time
+	attempts  int
 }
+
+// MaxNonceAttempts caps how many wrong guesses a slot accepts before
+// it is evicted. Without this cap, anyone who knew a wallet's address
+// could DoS its login by submitting a wrong nonce, wiping the
+// outstanding slot, and forcing a fresh /nonce round-trip every time.
+const MaxNonceAttempts = 5
 
 // NewMemoryNonceStore returns a fresh in-memory store. ttl bounds the
 // lifetime of any issued nonce; values <=0 fall back to 5 minutes.
@@ -51,9 +59,10 @@ func NewMemoryNonceStore(ttl time.Duration) *MemoryNonceStore {
 		ttl = 5 * time.Minute
 	}
 	return &MemoryNonceStore{
-		entries: make(map[string]nonceEntry),
-		ttl:     ttl,
-		now:     time.Now,
+		entries:     make(map[string]nonceEntry),
+		ttl:         ttl,
+		now:         time.Now,
+		maxAttempts: MaxNonceAttempts,
 	}
 }
 
@@ -75,8 +84,12 @@ func (s *MemoryNonceStore) Issue(address string) (string, error) {
 }
 
 // Consume looks up the address-keyed nonce and removes it if it
-// matches and is not yet expired. Any failure path collapses to
-// ErrNonceNotFound to keep the verification surface uniform.
+// matches and is not yet expired. Wrong guesses keep the slot in
+// place but increment an attempt counter; once the counter exceeds
+// MaxNonceAttempts the slot is evicted to bound brute-force work.
+//
+// All failure paths collapse to ErrNonceNotFound to keep the response
+// shape uniform and avoid leaking which constraint failed.
 func (s *MemoryNonceStore) Consume(address, nonce string) error {
 	key := strings.ToLower(address)
 
@@ -87,17 +100,25 @@ func (s *MemoryNonceStore) Consume(address, nonce string) error {
 	if !ok {
 		return ErrNonceNotFound
 	}
-	// Always delete: this guarantees single-use even if the supplied
-	// nonce was wrong (a wrong attempt burns the slot, forcing a fresh
-	// /nonce call. That is acceptable Phase-1 behavior).
-	delete(s.entries, key)
-
-	if entry.value != nonce {
-		return ErrNonceNotFound
-	}
+	// Expired entries are wiped regardless of supplied value.
 	if !s.now().Before(entry.expiresAt) {
+		delete(s.entries, key)
 		return ErrNonceNotFound
 	}
+	if entry.value != nonce {
+		// Wrong guess: keep the slot but charge an attempt. Once the
+		// budget runs out, drop the slot so a flood of guesses cannot
+		// pin it open indefinitely.
+		entry.attempts++
+		if entry.attempts >= s.maxAttempts {
+			delete(s.entries, key)
+		} else {
+			s.entries[key] = entry
+		}
+		return ErrNonceNotFound
+	}
+	// Correct value: success burns the slot exactly once.
+	delete(s.entries, key)
 	return nil
 }
 

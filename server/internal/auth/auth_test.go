@@ -135,17 +135,43 @@ func TestNonceStore_ReIssueReplacesPrevious(t *testing.T) {
 	require.ErrorIs(t, store.Consume(addr, n2), auth.ErrNonceNotFound)
 }
 
-func TestNonceStore_WrongValueBurnsSlot(t *testing.T) {
-	// Documenting the security-conservative behavior: a single wrong
-	// guess burns the address's slot, forcing the client to request a
-	// fresh nonce. This bounds the attacker's per-issue work to one
-	// attempt. Tests the implementation rather than imposing a
-	// looser contract.
+func TestNonceStore_WrongValueBelowCapKeepsSlot(t *testing.T) {
+	// Wrong guesses keep the slot until the per-address attempt
+	// counter is exhausted: this prevents anyone who knows a wallet
+	// address from DoSing its login by submitting a single wrong
+	// nonce. The legitimate signer can still consume the original
+	// nonce after a few bad guesses.
 	store := auth.NewMemoryNonceStore(time.Minute)
 	addr := "0x0000000000000000000000000000000000000002"
 	n, err := store.Issue(addr)
 	require.NoError(t, err)
-	require.ErrorIs(t, store.Consume(addr, "not-the-real-nonce"), auth.ErrNonceNotFound)
+
+	// A handful of wrong guesses below the cap leave the slot intact.
+	for i := 0; i < auth.MaxNonceAttempts-1; i++ {
+		require.ErrorIs(t, store.Consume(addr, "not-the-real-nonce"), auth.ErrNonceNotFound)
+	}
+
+	// The real nonce still works.
+	require.NoError(t, store.Consume(addr, n))
+	// Single-use: a second consume of the same value still fails.
+	require.ErrorIs(t, store.Consume(addr, n), auth.ErrNonceNotFound)
+}
+
+func TestNonceStore_WrongValueAtCapEvictsSlot(t *testing.T) {
+	// Once the attempt budget is exhausted, the slot is dropped to
+	// bound brute-force work. The legitimate signer must request a
+	// fresh nonce.
+	store := auth.NewMemoryNonceStore(time.Minute)
+	addr := "0x0000000000000000000000000000000000000003"
+	n, err := store.Issue(addr)
+	require.NoError(t, err)
+
+	for i := 0; i < auth.MaxNonceAttempts; i++ {
+		require.ErrorIs(t, store.Consume(addr, "wrong"), auth.ErrNonceNotFound)
+	}
+
+	// The slot was evicted on the final wrong guess; the original
+	// nonce no longer redeems.
 	require.ErrorIs(t, store.Consume(addr, n), auth.ErrNonceNotFound)
 }
 

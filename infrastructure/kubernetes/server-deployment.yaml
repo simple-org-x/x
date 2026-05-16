@@ -33,6 +33,11 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            - name: APP_ENV
+              # Anything other than "dev" makes config.Load refuse to
+              # boot if JWT_SECRET is unset, so a misconfigured cluster
+              # cannot accidentally sign tokens with the dev fallback.
+              value: "production"
             - name: LOG_LEVEL
               value: "info"
             - name: CORS_ALLOWED_ORIGINS
@@ -54,7 +59,6 @@ spec:
                 secretKeyRef:
                   name: cas-server-secrets
                   key: jwt-secret
-                  optional: true
           readinessProbe:
             httpGet:
               path: /readyz
