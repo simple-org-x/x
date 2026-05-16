@@ -17,18 +17,6 @@ metadata:
     # reads it through a real-ip snippet provided by the controller.
     nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
     external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
-    # /metrics is unauthenticated and meant for in-cluster scrape only
-    # (a Prometheus ServiceMonitor handles it directly via the cas-server
-    # Service). Deny it explicitly on the public api.* host so probes
-    # against api.crypto-arena.example.com/metrics get a 403 without
-    # ever reaching the upstream pod.
-    nginx.ingress.kubernetes.io/server-snippet: |
-      location = /metrics {
-        return 403;
-      }
-      location ^~ /metrics/ {
-        return 403;
-      }
 spec:
   ingressClassName: nginx
   tls:
@@ -57,3 +45,58 @@ spec:
                 name: cas-server
                 port:
                   number: 8080
+---
+# Public /metrics denial via a plain Ingress path rule. The cas-server
+# Service exposes /metrics on port 8080 so Prometheus can scrape it
+# inside the cluster (via a ServiceMonitor); we do NOT want that route
+# reachable from the public internet. A dedicated Ingress with higher
+# precedence than the catch-all `/` rule above routes /metrics to a
+# tiny "always 403" upstream (see metrics-deny.yaml).
+#
+# Why a separate Ingress rather than `nginx.ingress.kubernetes.io/server-snippet`?
+# Because ingress-nginx ships with `allow-snippet-annotations: "false"`
+# by default since v1.9 (mid-2023); the snippet would be parsed and
+# discarded and /metrics would silently remain reachable. A path rule
+# requires no controller-level configuration to be safe.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cas-ingress-metrics-deny
+  namespace: crypto-arena
+  labels:
+    app.kubernetes.io/name: cas-ingress
+    app.kubernetes.io/component: metrics-deny
+    app.kubernetes.io/part-of: cas
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - play.crypto-arena.example.com
+        - api.crypto-arena.example.com
+      secretName: cas-tls
+  rules:
+    - host: api.crypto-arena.example.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: cas-metrics-deny
+                port:
+                  number: 80
+    - host: play.crypto-arena.example.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: cas-metrics-deny
+                port:
+                  number: 80

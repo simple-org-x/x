@@ -43,6 +43,14 @@ type Config struct {
 	// RateLimitBurst is the per-IP bucket size.
 	RateLimitBurst int
 
+	// WalletVerifyRPS is the per-wallet-address refill rate for the
+	// /api/auth/wallet/verify rate limiter. Sub-1 values mean "less
+	// than one verify per second", which is fine for a UI flow that
+	// only retries on signature failure.
+	WalletVerifyRPS float64
+	// WalletVerifyBurst is the per-wallet-address bucket size.
+	WalletVerifyBurst int
+
 	// NonceTTL bounds how long an issued wallet-login nonce stays
 	// redeemable. Short enough that replay windows are tiny, long
 	// enough to survive a slow wallet-signing UX.
@@ -88,17 +96,19 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		AppEnv:         appEnv,
-		HTTPAddr:       envString("HTTP_ADDR", ":"+envString("PORT", "8080")),
-		JWTSecret:      jwtSecret,
-		AllowedOrigins: splitCSV(envString("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
-		RateLimitRPS:   envFloat("RATE_LIMIT_RPS", 20),
-		RateLimitBurst: envInt("RATE_LIMIT_BURST", 40),
-		NonceTTL:       envDuration("AUTH_NONCE_TTL", 5*time.Minute),
-		JWTTTL:         envDuration("AUTH_JWT_TTL", 24*time.Hour),
-		LogLevel:       envString("LOG_LEVEL", "info"),
-		RedisURL:       os.Getenv("REDIS_URL"),
-		PostgresURL:    os.Getenv("POSTGRES_URL"),
+		AppEnv:            appEnv,
+		HTTPAddr:          envString("HTTP_ADDR", ":"+envString("PORT", "8080")),
+		JWTSecret:         jwtSecret,
+		AllowedOrigins:    splitCSV(envString("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
+		RateLimitRPS:      envFloat("RATE_LIMIT_RPS", 20),
+		RateLimitBurst:    envInt("RATE_LIMIT_BURST", 40),
+		WalletVerifyRPS:   envFloat("WALLET_VERIFY_RPS", 0.5),
+		WalletVerifyBurst: envInt("WALLET_VERIFY_BURST", 5),
+		NonceTTL:          envDuration("AUTH_NONCE_TTL", 5*time.Minute),
+		JWTTTL:            envDuration("AUTH_JWT_TTL", 24*time.Hour),
+		LogLevel:          envString("LOG_LEVEL", "info"),
+		RedisURL:          os.Getenv("REDIS_URL"),
+		PostgresURL:       os.Getenv("POSTGRES_URL"),
 	}, nil
 }
 

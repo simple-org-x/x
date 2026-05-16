@@ -34,7 +34,13 @@ services:
       PORT: "8080"
       LOG_LEVEL: "info"
       CORS_ALLOWED_ORIGINS: "http://localhost:5173"
-      JWT_SECRET: "dev-only-insecure-secret-change-me"
+      # APP_ENV=dev is the only mechanism that allows the server to
+      # boot without an explicit JWT_SECRET (it falls back to the
+      # well-known dev secret in config.devJWTSecret). Setting it
+      # explicitly here makes it impossible for a developer to copy
+      # this compose file, flip APP_ENV to production, and accidentally
+      # boot with a known-public signing secret.
+      APP_ENV: "dev"
       REDIS_URL: "redis://redis:6379/0"
       POSTGRES_URL: "postgres://cas:devpw@postgres:5432/cas?sslmode=disable"
     ports:

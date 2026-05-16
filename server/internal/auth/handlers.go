@@ -16,6 +16,11 @@ import (
 //	r.Mount("/api/auth", auth.Handlers{Service: svc}.Routes())
 type Handlers struct {
 	Service *Service
+	// VerifyLimiter, when non-nil, throttles POST /wallet/verify per
+	// wallet address. The check runs before NonceStore.Consume, so
+	// an exhausted budget returns 429 without burning a nonce
+	// attempt against the target slot.
+	VerifyLimiter *AddressRateLimiter
 }
 
 // Routes returns the subrouter that owns /api/auth/*.
@@ -93,6 +98,16 @@ func (h Handlers) WalletVerify(w http.ResponseWriter, r *http.Request) {
 	var req verifyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Per-address rate limit runs before VerifyWalletSignature so an
+	// exhausted budget returns 429 without burning a nonce attempt
+	// against the target slot. The IP-level limiter upstream still
+	// catches floods from a single source; this one isolates work
+	// per wallet so an attacker who knows a target address cannot
+	// slot-cycle the victim's nonce by rotating source IPs.
+	if h.VerifyLimiter != nil && !h.VerifyLimiter.Allow(req.Address) {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
 	addr, err := h.Service.VerifyWalletSignature(req.Address, req.Nonce, req.Signature)

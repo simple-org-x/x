@@ -4,6 +4,7 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -68,6 +69,29 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	n, err := s.ResponseWriter.Write(b)
 	s.bytes += n
 	return n, err
+}
+
+// Hijack delegates to the wrapped ResponseWriter so WS upgrades
+// (which require http.Hijacker) keep working when the request passes
+// through this middleware. Without this, an embedded ResponseWriter
+// breaks the interface assertion the WS library uses to take over
+// the connection. Returns http.ErrNotSupported when the underlying
+// writer does not implement Hijacker.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// Flush delegates to the wrapped ResponseWriter so streaming
+// responses (e.g., chunked text/event-stream) still work through
+// this middleware. No-op if the underlying writer does not support
+// flushing.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // Logger emits a structured access log line per request via slog.

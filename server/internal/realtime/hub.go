@@ -226,7 +226,13 @@ func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub, al
 		// services) that can set headers freely.
 		tok := extractSubprotocolToken(r)
 		if tok == "" {
-			tok = bearerHeader(r)
+			// Authorization: Bearer is accepted as a fallback for
+			// non-browser clients (curl, integration tests, internal
+			// services) that can set headers freely. auth.Bearer
+			// reads the header only -- it deliberately ignores the
+			// access_token query string for the same reason the WS
+			// handshake does.
+			tok = auth.Bearer(r)
 		}
 		if tok == "" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
@@ -283,24 +289,6 @@ func Handler(authSvc *auth.Service, runner *gameserver.MatchRunner, hub *Hub, al
 		// elapses.
 		readerLoop(ctx, c, runner, hub, hub.logger)
 	})
-}
-
-// bearerHeader extracts an Authorization: Bearer <token> token. Unlike
-// auth.Bearer, it deliberately ignores the access_token query string
-// to keep WS authentication off the URL line.
-func bearerHeader(r *http.Request) string {
-	a := r.Header.Get("Authorization")
-	if a == "" {
-		return ""
-	}
-	parts := strings.SplitN(a, " ", 2)
-	if len(parts) != 2 {
-		return ""
-	}
-	if !strings.EqualFold(parts[0], "Bearer") {
-		return ""
-	}
-	return strings.TrimSpace(parts[1])
 }
 
 // inboundMessage is the union of WS messages we accept from the client.

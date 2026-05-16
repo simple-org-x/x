@@ -39,6 +39,11 @@ func main() {
 	janitorCtx, janitorCancel := context.WithCancel(context.Background())
 	defer janitorCancel()
 	deps.RateLimiter.StartJanitor(janitorCtx, 0)
+	// Same story for the per-wallet-address /verify limiter: a
+	// flood of unique addresses must not pin the map in memory.
+	if deps.AuthVerifyLimiter != nil {
+		deps.AuthVerifyLimiter.StartJanitor(janitorCtx, 0)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddrNormalized(),

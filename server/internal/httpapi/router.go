@@ -28,15 +28,16 @@ import (
 // a Deps with in-memory ones (which is what we currently ship in both
 // cases).
 type Deps struct {
-	Config      config.Config
-	Logger      *slog.Logger
-	AuthService *auth.Service
-	Matchmaking *matchmaking.Service
-	Runner      *gameserver.MatchRunner
-	Hub         *realtime.Hub
-	Ledger      rewards.Ledger
-	RateLimiter *middleware.IPRateLimiter
-	Metrics     *middleware.Metrics
+	Config            config.Config
+	Logger            *slog.Logger
+	AuthService       *auth.Service
+	AuthVerifyLimiter *auth.AddressRateLimiter
+	Matchmaking       *matchmaking.Service
+	Runner            *gameserver.MatchRunner
+	Hub               *realtime.Hub
+	Ledger            rewards.Ledger
+	RateLimiter       *middleware.IPRateLimiter
+	Metrics           *middleware.Metrics
 }
 
 // NewDeps builds the standard set of in-memory implementations from
@@ -47,6 +48,11 @@ func NewDeps(cfg config.Config, logger *slog.Logger) Deps {
 	}
 	nonceStore := auth.NewMemoryNonceStore(cfg.NonceTTL)
 	authSvc := auth.NewService(nonceStore, cfg.JWTSecret, cfg.JWTTTL)
+	// Per-address verify limiter: a steady drip with a small burst
+	// so a legitimate wallet that retries a few times still gets
+	// through, while a single address cannot empty MaxNonceAttempts
+	// against its own slot back-to-back without being throttled.
+	verifyLimiter := auth.NewAddressRateLimiter(cfg.WalletVerifyRPS, cfg.WalletVerifyBurst)
 	queue := matchmaking.NewMemoryQueue()
 	mm := matchmaking.NewService(queue)
 	runner := gameserver.NewMatchRunner()
@@ -55,15 +61,16 @@ func NewDeps(cfg config.Config, logger *slog.Logger) Deps {
 	rl := middleware.NewIPRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
 	metrics := middleware.NewMetrics(nil)
 	return Deps{
-		Config:      cfg,
-		Logger:      logger,
-		AuthService: authSvc,
-		Matchmaking: mm,
-		Runner:      runner,
-		Hub:         hub,
-		Ledger:      ledger,
-		RateLimiter: rl,
-		Metrics:     metrics,
+		Config:            cfg,
+		Logger:            logger,
+		AuthService:       authSvc,
+		AuthVerifyLimiter: verifyLimiter,
+		Matchmaking:       mm,
+		Runner:            runner,
+		Hub:               hub,
+		Ledger:            ledger,
+		RateLimiter:       rl,
+		Metrics:           metrics,
 	}
 }
 
@@ -90,7 +97,7 @@ func Build(d Deps) chi.Router {
 			promhttp.HandlerFor(d.Metrics.Registry, promhttp.HandlerOpts{}))
 	}
 
-	authH := auth.Handlers{Service: d.AuthService}
+	authH := auth.Handlers{Service: d.AuthService, VerifyLimiter: d.AuthVerifyLimiter}
 	r.Mount("/api/auth", authH.Routes())
 
 	// Authenticated subroutes share a single auth middleware.

@@ -31,6 +31,12 @@ func newServer(t *testing.T) (*httptest.Server, httpapi.Deps) {
 	cfg.JWTSecret = []byte("test-secret")
 	cfg.RateLimitRPS = 1000
 	cfg.RateLimitBurst = 1000
+	// Production wallet-verify limiter is per-address and intentionally
+	// tight; tests that exercise non-verify routes need the limiter
+	// out of the way. The verify-specific test below builds its own
+	// server with a tighter budget.
+	cfg.WalletVerifyRPS = 1000
+	cfg.WalletVerifyBurst = 1000
 	deps := httpapi.NewDeps(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(httpapi.Build(deps))
 	t.Cleanup(srv.Close)
@@ -148,6 +154,129 @@ func TestWalletNonceAndVerifyHappyPath(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&verifyResp))
 	assert.NotEmpty(t, verifyResp.Token)
 	assert.Equal(t, addr, verifyResp.Address)
+}
+
+// TestWalletVerify_PerAddressRateLimitBlocksBeforeNonceWork is the
+// load-bearing test for v2 issue 2: an address that exhausts its
+// per-address verify budget gets a 429 BEFORE NonceStore.Consume is
+// reached, so the legitimate signer's nonce slot is preserved. A
+// second address is unaffected, proving buckets are isolated.
+func TestWalletVerify_PerAddressRateLimitBlocksBeforeNonceWork(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.JWTSecret = []byte("test-secret")
+	cfg.RateLimitRPS = 1000
+	cfg.RateLimitBurst = 1000
+	// Tight per-address budget so a small loop exhausts it.
+	cfg.WalletVerifyRPS = 0.01
+	cfg.WalletVerifyBurst = 2
+
+	deps := httpapi.NewDeps(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv := httptest.NewServer(httpapi.Build(deps))
+	defer srv.Close()
+
+	// Generate two distinct wallets. Address A is the victim; we
+	// exhaust its verify budget with bogus signatures. Address B is
+	// the control: its bucket must be untouched.
+	privA, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	addrA := crypto.PubkeyToAddress(privA.PublicKey).Hex()
+
+	privB, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	addrB := crypto.PubkeyToAddress(privB.PublicKey).Hex()
+
+	// Issue a legitimate nonce for address A so we can prove later
+	// the slot is still alive after the throttle kicks in.
+	resp, err := http.Post(srv.URL+"/api/auth/wallet/nonce", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"address":%q}`, addrA)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var nonceResp struct {
+		Nonce   string `json:"nonce"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&nonceResp))
+
+	// Burn through address A's burst budget with bogus signatures.
+	// At cfg.WalletVerifyBurst=2 the third call must 429. Because
+	// the limiter runs BEFORE NonceStore.Consume, the legitimate
+	// nonce stays usable through this storm (verified below).
+	bogus, _ := json.Marshal(map[string]string{
+		"address":   addrA,
+		"nonce":     "00000000000000000000000000000000",
+		"signature": strings.Repeat("00", 65),
+	})
+	statuses := make([]int, 0, 4)
+	for i := 0; i < 4; i++ {
+		r, err := http.Post(srv.URL+"/api/auth/wallet/verify",
+			"application/json", bytes.NewReader(bogus))
+		require.NoError(t, err)
+		statuses = append(statuses, r.StatusCode)
+		r.Body.Close()
+	}
+	// First two calls fall through to VerifyWalletSignature and
+	// return 401 (the limiter pays a token but the bogus nonce
+	// fails the recovery check). Calls 3 and 4 are throttled at the
+	// limiter and return 429 without ever touching NonceStore.
+	assert.Equal(t, http.StatusUnauthorized, statuses[0])
+	assert.Equal(t, http.StatusUnauthorized, statuses[1])
+	assert.Equal(t, http.StatusTooManyRequests, statuses[2],
+		"third call must 429 before any nonce work happens")
+	assert.Equal(t, http.StatusTooManyRequests, statuses[3])
+
+	// Address B is unaffected: a verify with a real signature
+	// against B succeeds end-to-end while A is still throttled.
+	respB, err := http.Post(srv.URL+"/api/auth/wallet/nonce", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"address":%q}`, addrB)))
+	require.NoError(t, err)
+	defer respB.Body.Close()
+	require.Equal(t, http.StatusOK, respB.StatusCode)
+	var bResp struct {
+		Nonce   string `json:"nonce"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.NewDecoder(respB.Body).Decode(&bResp))
+
+	sigB, err := auth.SignPersonalMessage(privB, bResp.Message)
+	require.NoError(t, err)
+	verifyB, _ := json.Marshal(map[string]string{
+		"address":   addrB,
+		"nonce":     bResp.Nonce,
+		"signature": hex.EncodeToString(sigB),
+	})
+	respVB, err := http.Post(srv.URL+"/api/auth/wallet/verify",
+		"application/json", bytes.NewReader(verifyB))
+	require.NoError(t, err)
+	defer respVB.Body.Close()
+	assert.Equal(t, http.StatusOK, respVB.StatusCode,
+		"a different address must be unaffected by another address's exhausted budget")
+
+	// Now prove address A's nonce slot is still alive: a real
+	// signature against the original nonce succeeds once we swap
+	// in a fresh limiter. The fresh-limiter swap stands in for the
+	// minute-scale wall-clock refill we cannot reasonably wait for
+	// in a unit test, and is the pragmatic equivalent of "address
+	// A's budget eventually refills".
+	deps.AuthVerifyLimiter = auth.NewAddressRateLimiter(1000, 1000)
+	srv2 := httptest.NewServer(httpapi.Build(deps))
+	defer srv2.Close()
+
+	sigA, err := auth.SignPersonalMessage(privA, nonceResp.Message)
+	require.NoError(t, err)
+	verifyA, _ := json.Marshal(map[string]string{
+		"address":   addrA,
+		"nonce":     nonceResp.Nonce,
+		"signature": hex.EncodeToString(sigA),
+	})
+	respVA, err := http.Post(srv2.URL+"/api/auth/wallet/verify",
+		"application/json", bytes.NewReader(verifyA))
+	require.NoError(t, err)
+	defer respVA.Body.Close()
+	assert.Equal(t, http.StatusOK, respVA.StatusCode,
+		"address A's nonce slot must still be alive after throttling -- "+
+			"the limiter ran before any NonceStore.Consume call")
 }
 
 func TestRewardsMeRequiresAuth(t *testing.T) {

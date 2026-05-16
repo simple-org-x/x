@@ -244,10 +244,14 @@ contract RewardPool is AccessControl, ReentrancyGuard, EIP712 {
         Match storage m = _matches[matchId];
         // Decrement residual so adminSweep observes the correct
         // remaining balance for this specific match.
+        //
+        // Fail-open on underflow: clamp residual to zero rather than
+        // reverting. settle's invariant (sum(shares) == m.pool) means
+        // underflow should never happen in practice. If it ever did,
+        // we'd rather pay this winner and lose track of dust than
+        // permanently brick withdraw for everyone behind them, so
+        // this branch is a deliberate safety net rather than a bug.
         if (amount > m.residual) {
-            // Defensive: should never happen given settle's accounting,
-            // but caps the residual at zero to prevent an underflow
-            // panic if invariants ever drift.
             m.residual = 0;
         } else {
             m.residual -= amount;
