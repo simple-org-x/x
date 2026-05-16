@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/simple-org/x/server/internal/auth"
 	"github.com/simple-org/x/server/internal/config"
@@ -35,6 +36,7 @@ type Deps struct {
 	Hub         *realtime.Hub
 	Ledger      rewards.Ledger
 	RateLimiter *middleware.IPRateLimiter
+	Metrics     *middleware.Metrics
 }
 
 // NewDeps builds the standard set of in-memory implementations from
@@ -51,6 +53,7 @@ func NewDeps(cfg config.Config, logger *slog.Logger) Deps {
 	hub := realtime.NewHub(logger)
 	ledger := rewards.NewMemoryLedger()
 	rl := middleware.NewIPRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	metrics := middleware.NewMetrics(nil)
 	return Deps{
 		Config:      cfg,
 		Logger:      logger,
@@ -60,6 +63,7 @@ func NewDeps(cfg config.Config, logger *slog.Logger) Deps {
 		Hub:         hub,
 		Ledger:      ledger,
 		RateLimiter: rl,
+		Metrics:     metrics,
 	}
 }
 
@@ -73,9 +77,18 @@ func Build(d Deps) chi.Router {
 	r.Use(middleware.Recover(d.Logger))
 	r.Use(middleware.CORS(d.Config.AllowedOrigins))
 	r.Use(d.RateLimiter.Middleware)
+	if d.Metrics != nil {
+		r.Use(d.Metrics.Middleware)
+	}
 
 	r.Get("/healthz", healthz)
 	r.Get("/readyz", readyz)
+	if d.Metrics != nil {
+		// /metrics returns the Prometheus default text exposition;
+		// promhttp adds Content-Type and gzip negotiation for us.
+		r.Method(http.MethodGet, "/metrics",
+			promhttp.HandlerFor(d.Metrics.Registry, promhttp.HandlerOpts{}))
+	}
 
 	authH := auth.Handlers{Service: d.AuthService}
 	r.Mount("/api/auth", authH.Routes())

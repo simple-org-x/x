@@ -1,0 +1,75 @@
+# Helm values stub for the kube-prometheus-stack chart.
+#
+# Install with:
+#   helm repo add prometheus-community \
+#     https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install kube-prom-stack \
+#     prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f infrastructure/monitoring/prometheus-values.yaml
+#
+# Values are conservative single-node defaults; production should
+# override storage classes, retention, and resource requests.
+
+fullnameOverride: kube-prom
+
+global:
+  rbac:
+    create: true
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "20GB"
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    # Pick up every ServiceMonitor across the cluster, not just the
+    # ones in the helm release's namespace.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    retention: 120h
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+grafana:
+  enabled: true
+  adminPassword: "change-me-in-secrets-manager"
+  defaultDashboardsEnabled: true
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  persistence:
+    enabled: true
+    size: 5Gi
+  service:
+    type: ClusterIP
+
+# Disable the bundled exporter for the kube-state-metrics nodes if a
+# managed control plane already exposes them; toggle as needed.
+kubeApiServer:
+  enabled: true
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false

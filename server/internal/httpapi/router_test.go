@@ -187,6 +187,28 @@ func TestMatchStartAndLookup(t *testing.T) {
 	_ = deps.Runner.End(startResp.MatchID)
 }
 
+func TestMetricsEndpointExposesGoAndCustomCounters(t *testing.T) {
+	srv, _ := newServer(t)
+
+	// Hit /healthz first so cas_http_requests_total has a sample.
+	resp, err := http.Get(srv.URL + "/healthz")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp2, err := http.Get(srv.URL + "/metrics")
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	body, err := io.ReadAll(resp2.Body)
+	require.NoError(t, err)
+	text := string(body)
+	assert.Contains(t, text, "go_goroutines",
+		"default Go runtime collector should be registered")
+	assert.Contains(t, text, "cas_http_requests_total",
+		"the request-counter middleware should have registered its CounterVec")
+}
+
 func guestToken(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	resp, err := http.Post(srv.URL+"/api/auth/guest", "application/json", nil)

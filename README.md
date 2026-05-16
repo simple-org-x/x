@@ -73,12 +73,111 @@ so the skeleton (without yet-to-land subprojects) still exits cleanly.
 ## Roadmap
 
 - **Phase 1 (MVP prototype):** 1 character, 2 weapons, 5 upgrades, 1 boss,
-  single map, guest mode only, single-player loop.
+  single map, guest mode only, single-player loop. **[implemented]**
 - **Phase 2:** Full content tables (3 chars / 5 weapons / 20 upgrades / 10
-  enemy types), matchmaking queue, optional wallet connect.
+  enemy types), matchmaking queue, optional wallet connect. **[scaffolded]**
 - **Phase 3:** Server-authoritative multiplayer, leaderboards, daily runs.
+  **[scaffolded]**
 - **Phase 4:** On-chain reward pool, cosmetic NFT drops, tournament escrow.
+  **[scaffolded]**
 - **Phase 5:** Full Kubernetes + Terraform deploy with Prometheus/Grafana.
+  **[scaffolded]**
+
+Phase 1 is playable end-to-end (`make dev-client`). Phases 2-5 have their
+data tables, server endpoints, smart contracts, and infrastructure manifests
+in place but require feature work to wire them into the gameplay loop.
+
+## Architecture
+
+```
+                     +-----------------------------+
+                     |        Cloudflare DNS       |
+                     |   play.* + api.* (proxied)  |
+                     +--------------+--------------+
+                                    |
+                          +---------+---------+
+                          |  Kubernetes (EKS) |
+                          |  ingress-nginx    |
+                          +----+----------+---+
+                               |          |
+                  +------------+--+    +--+----------------+
+                  |  cas-client    |    |  cas-server (HPA) |
+                  |  React+Phaser  |    |  Go HTTP+WS API   |
+                  |  nginx:80      |    |  /healthz /readyz |
+                  +-------+--------+    |  /metrics         |
+                          |             +-+----+--------+---+
+                          | REST + WS     |    |        |
+                          +---------------+    |        |
+                                               |        |
+                                  +------------+        +-----------+
+                                  |                                 |
+                          +-------+--------+               +--------+--------+
+                          |  Redis 7       |               |  Postgres 16    |
+                          |  matchmaking   |               |  ledger / users |
+                          |  queue + cache |               |  with PVC       |
+                          +----------------+               +--------+--------+
+                                                                    |
+                                                                    | server-signed
+                                                                    | settlements
+                                                                    v
+                                                          +---------+--------+
+                                                          |  EVM contracts   |
+                                                          |  RewardPool      |
+                                                          |  TournamentEscrow|
+                                                          |  CosmeticNFT     |
+                                                          +------------------+
+```
+
+The client never talks to chain directly for gameplay. The Go server is the
+sole signer for reward settlements; the smart contracts only accept claims
+backed by a server signature. Cosmetic NFTs are ERC-1155 and never affect
+stats.
+
+## How crypto rewards work
+
+Crypto is fully optional. Guests play the loop in their browser without ever
+seeing a wallet prompt. For players who do connect a wallet, the reward flow
+is intentionally narrow:
+
+1. **Entry fee.** A wallet-authenticated player joins a paid match by calling
+   `RewardPool.deposit(matchId)` with a fixed entry fee. The contract escrows
+   the funds and emits `Deposited(player, matchId, amount)`.
+2. **Server-authoritative match.** The Go server runs the match (matchmaking,
+   simulation tick loop, anti-cheat checks). Game outcome is determined off
+   chain because on-chain simulation would be both slow and gameable.
+3. **Server-signed settlement.** When the match ends, the server's signer key
+   produces an EIP-712 settlement payload listing winners and amounts. The
+   payload is hashed and signed; the signature plus payload is returned to
+   the client and any indexer.
+4. **Player claim.** Winning players (or a relayer) submit the payload and
+   signature to `RewardPool.claim(...)`. The contract verifies the signature
+   against a known signer set (rotated via `AccessControl`) and pays out from
+   escrow. Losing players' deposits stay in the pool for the next round, or
+   are refunded if a match aborts.
+5. **Cosmetic NFT drops.** Cosmetic skins are minted from `CosmeticNFT`
+   (ERC-1155). They have zero stat effect and exist purely for vanity.
+
+This separation keeps gameplay fast and fair while letting players self
+custody both deposits and winnings: the server cannot mint funds it does not
+have, and players cannot claim funds the server has not signed off on.
+
+## Anti pay-to-win pledge
+
+Crypto Arena Survivors is committed to keeping the playing field even:
+
+- **No stat-affecting purchases, ever.** Nothing on chain or off chain
+  changes damage, health, speed, weapon firing rates, drop tables, or any
+  other gameplay number. Cosmetic NFTs are skins only.
+- **Guest mode is a first-class citizen.** The full single-player loop, all
+  characters, all weapons, and all upgrades are available without a wallet.
+- **No paid loot boxes.** The upgrade pool is identical for paying and
+  non-paying players. Match outcomes derive only from input and the seeded
+  RNG.
+- **Auditability.** Reward settlements are server-signed and replayable; any
+  observer can verify a payout corresponds to a real match outcome by
+  checking the EIP-712 signature against the published signer set.
+- **Cosmetic NFTs are optional and tradable.** Players who do not want
+  on-chain assets simply do not connect a wallet and never see them.
 
 ## Per-component documentation
 
