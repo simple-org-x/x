@@ -58,6 +58,10 @@ mypy_path = "src"
 module = ["hyperliquid.*", "eth_account", "eth_account.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
