@@ -27,14 +27,21 @@ export default function PhaserGame() {
     // BootScene reads characterId/events from the global registry then
     // forwards them to MainScene via scene.start data.
     const RegistryAwareBoot = class extends BootScene {
+      private _characterId: typeof characterId;
+      private _events: typeof events;
+
+      constructor() {
+        super();
+        this._characterId = characterId;
+        this._events = events;
+      }
+
       override create(): void {
         super.create();
-        // BootScene's super.create() already started MainScene with no
-        // payload; stop it and restart with the data we need.
-        this.scene.stop('MainScene');
+        // Start MainScene with proper data
         this.scene.start('MainScene', {
-          characterId: this.registry.get('characterId'),
-          events: this.registry.get('events'),
+          characterId: this._characterId,
+          events: this._events,
         });
       }
     };
@@ -52,12 +59,12 @@ export default function PhaserGame() {
         default: 'arcade',
         arcade: { debug: false, gravity: { x: 0, y: 0 } },
       },
+      input: {
+        keyboard: true,
+      },
       scene: [RegistryAwareBoot, MainScene],
       banner: false,
     });
-
-    game.registry.set('characterId', characterId);
-    game.registry.set('events', events);
 
     gameRef.current = game;
 

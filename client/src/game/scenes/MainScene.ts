@@ -440,9 +440,22 @@ export class MainScene extends Phaser.Scene {
   }
 
   private onPlayerBossBullet(bullet: Phaser.Physics.Arcade.Sprite): void {
+    // Guard against null/undefined
+    if (!bullet || !bullet.active) return;
+    if (!this.player || !this.player.active) return;
+    if (!this.playerState) return;
+
     const dmg = (bullet.getData('damage') as number | undefined) ?? 10;
     bullet.destroy();
     applyIncomingDamage(this.playerState, dmg);
+  }
+
+  private onPlayerBoss(): void {
+    if (!this.boss || !this.bossState) return;
+    const cooldown = (this.boss.getData('hitCd') as number | undefined) ?? 0;
+    if (cooldown > this.time.now) return;
+    this.boss.setData('hitCd', this.time.now + 600);
+    applyIncomingDamage(this.playerState, this.bossState.def.damage);
   }
 
   private cullBullets(): void {
@@ -453,6 +466,7 @@ export class MainScene extends Phaser.Scene {
     const x1 = cam.scrollX + cam.width + margin;
     const y1 = cam.scrollY + cam.height + margin;
     const cull = (b: Phaser.Physics.Arcade.Sprite) => {
+      if (!b || !b.active) return;
       if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) b.destroy();
     };
     this.bullets.children.iterate((o) => {
@@ -475,6 +489,11 @@ export class MainScene extends Phaser.Scene {
     this.bossState = makeBossState(BOSS_WARDEN);
     this.cameras.main.shake(300, 0.005);
     this.events_.bossSpawn();
+    
+    // Boss body collision - damage player on contact (set up after boss spawns)
+    this.physics.add.overlap(this.player, this.boss, () => {
+      this.onPlayerBoss();
+    });
   }
 
   private updateBoss(deltaMs: number): void {

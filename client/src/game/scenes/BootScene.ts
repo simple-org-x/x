@@ -54,7 +54,8 @@ export class BootScene extends Phaser.Scene {
     px.generateTexture('white-pixel', 1, 1);
     px.destroy();
 
-    this.scene.start('MainScene');
+    // Don't auto-start MainScene here - let the registry-aware version handle it
+    // this.scene.start('MainScene');
   }
 
   private makeCircleTexture(key: string, radius: number, fill: number, stroke: number, strokeWidth: number): void {
