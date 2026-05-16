@@ -5,9 +5,11 @@ import {
   type UpgradeTier,
   type StatEffect,
   type BuildEffect,
+  type LegendaryEffect,
 } from '@/data/upgrades';
 import type { PlayerState } from './Player';
 import type { CharacterStats } from '@/data/characters';
+import { useAppStore } from '@/state/store';
 
 /**
  * Draw `count` distinct upgrades using tier-weighted random selection.
@@ -64,8 +66,10 @@ export function applyUpgrade(player: PlayerState, upgrade: UpgradeDef): void {
       // Heal to full when max HP is gained, matches genre convention.
       player.hp = player.stats.maxHp;
     }
-  } else {
+  } else if (upgrade.effect.kind === 'build') {
     applyBuildEffect(player, upgrade.effect);
+  } else {
+    applyLegendaryEffect(upgrade.effect);
   }
 }
 
@@ -77,4 +81,25 @@ function applyStatEffect(stats: CharacterStats, effect: StatEffect): void {
 
 function applyBuildEffect(player: PlayerState, effect: BuildEffect): void {
   player.builds.add(effect.build);
+}
+
+function applyLegendaryEffect(effect: LegendaryEffect): void {
+  const store = useAppStore.getState();
+  if (effect.skillId === 'freeze-blast') {
+    store.addLegendarySkill({
+      id: 'freeze-blast',
+      name: 'Freeze Blast',
+      description: 'Freeze non-boss enemies for 3-5 seconds.',
+      color: 0x66ddff,
+      charges: 1,
+    });
+  } else if (effect.skillId === 'purge-bolt') {
+    store.addLegendarySkill({
+      id: 'purge-bolt',
+      name: 'Purge Bolt',
+      description: 'Kill all non-boss enemies on screen.',
+      color: 0xffd24a,
+      charges: 1,
+    });
+  }
 }

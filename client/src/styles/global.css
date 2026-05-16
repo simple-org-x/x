@@ -214,6 +214,58 @@ button:disabled {
   font-size: 12px;
 }
 
+/* Legendary skill buttons need pointer-events re-enabled (parent .cas-hud is none) */
+.cas-legendary-skills {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cas-legendary-btn {
+  pointer-events: auto;
+  background: rgba(11, 13, 18, 0.85);
+  border: 2px solid var(--legendary);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--legendary);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0 14px -4px var(--legendary);
+  transition: transform 80ms ease, background 120ms ease;
+}
+
+.cas-legendary-btn:hover {
+  background: rgba(255, 184, 74, 0.18);
+  transform: translateY(-1px);
+}
+
+.cas-legendary-btn:active {
+  transform: translateY(1px);
+}
+
+.cas-skills-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.cas-skill-chip {
+  background: rgba(11, 13, 18, 0.75);
+  border: 1px solid var(--common);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.cas-skill-chip[data-tier='rare']      { border-color: var(--rare); color: var(--rare); }
+.cas-skill-chip[data-tier='epic']      { border-color: var(--epic); color: var(--epic); }
+.cas-skill-chip[data-tier='legendary'] { border-color: var(--legendary); color: var(--legendary); }
+
 .cas-upgrade-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(160px, 1fr));
@@ -318,4 +370,151 @@ button:disabled {
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 12px;
+}
+
+/* === Tester / Dev Panel === */
+.cas-dev-panel {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  width: 260px;
+  background: rgba(11, 13, 18, 0.94);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  z-index: 50;
+  pointer-events: auto;
+  box-shadow: 0 0 20px -6px var(--accent);
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.cas-dev-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-weight: bold;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  font-size: 11px;
+}
+
+.cas-dev-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-soft);
+  font-size: 18px;
+  padding: 0 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.cas-dev-close:hover {
+  color: var(--accent-hot);
+  background: transparent;
+}
+
+.cas-dev-hint {
+  font-size: 10px;
+  color: var(--fg-soft);
+  margin-bottom: 8px;
+}
+
+.cas-dev-hint kbd {
+  background: #0e131c;
+  border: 1px solid #2a3142;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.cas-dev-section {
+  border-top: 1px solid #1c2233;
+  padding-top: 6px;
+  margin-top: 6px;
+}
+
+.cas-dev-section:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.cas-dev-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fg-soft);
+  margin-bottom: 4px;
+}
+
+.cas-dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.cas-dev-row button {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #0e131c;
+  border: 1px solid #2a3142;
+  cursor: pointer;
+}
+
+.cas-dev-row button:hover {
+  background: #1a2030;
+  border-color: var(--accent);
+}
+
+.cas-dev-btn-hot {
+  border-color: var(--accent-hot) !important;
+  color: var(--accent-hot);
+}
+
+.cas-dev-btn-gold {
+  border-color: var(--legendary) !important;
+  color: var(--legendary);
+}
+
+.cas-dev-btn-active {
+  background: rgba(92, 247, 196, 0.18) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent);
+}
+
+.cas-dev-mini-hint {
+  font-size: 10px;
+  color: var(--fg-soft);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.cas-dev-fab {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(11, 13, 18, 0.85);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 50;
+  pointer-events: auto;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cas-dev-fab:hover {
+  background: rgba(92, 247, 196, 0.15);
 }

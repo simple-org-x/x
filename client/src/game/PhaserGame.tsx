@@ -17,6 +17,9 @@ export default function PhaserGame() {
     const events: GameEvents = {
       hudUpdate: (h) => useAppStore.getState().setHud(h),
       bossSpawn: () => useAppStore.getState().setBossActive(true),
+      bossDefeated: () => useAppStore.getState().setBossActive(false),
+      skillGained: (skill) => useAppStore.getState().addActiveSkill(skill),
+      legendaryGained: (skill) => useAppStore.getState().addLegendarySkill(skill),
       levelUp: (cards, resolve) => {
         useAppStore.getState().openUpgradePicker(cards, resolve);
       },

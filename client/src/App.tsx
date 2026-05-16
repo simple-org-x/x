@@ -6,6 +6,11 @@ import HowToPlay from '@/ui/HowToPlay';
 import GameOver from '@/ui/GameOver';
 import Hud from '@/ui/Hud';
 import UpgradePicker from '@/ui/UpgradePicker';
+import UsernamePrompt from '@/ui/UsernamePrompt';
+import Leaderboard from '@/ui/Leaderboard';
+import SkillList from '@/ui/SkillList';
+import BossBestiary from '@/ui/BossBestiary';
+import DevPanel from '@/ui/DevPanel';
 import { wallet } from '@/network/wallet';
 
 // Lazy-load the Phaser host so jsdom-based tests can render <App /> without
@@ -18,6 +23,7 @@ export default function App() {
   const session = wallet.getSession();
 
   const isPlaying = screen === 'playing';
+  const isGameActive = screen === 'playing' || screen === 'paused';
 
   return (
     <div className="cas-app">
@@ -31,16 +37,21 @@ export default function App() {
         </div>
       </header>
       <main className="cas-stage">
-        {isPlaying ? (
+        {isGameActive ? (
           <Suspense fallback={<div style={{ color: 'var(--fg-soft)', padding: 24 }}>Loading...</div>}>
             <PhaserGame />
           </Suspense>
         ) : null}
-        {isPlaying ? <Hud /> : null}
+        {isGameActive ? <Hud /> : null}
+        {isGameActive ? <DevPanel /> : null}
         <UpgradePicker />
         {screen === 'menu' ? <MainMenu /> : null}
         {screen === 'character-select' ? <CharacterSelect /> : null}
         {screen === 'how-to-play' ? <HowToPlay /> : null}
+        {screen === 'username' ? <UsernamePrompt /> : null}
+        {screen === 'leaderboard' ? <Leaderboard /> : null}
+        {screen === 'skill-list' ? <SkillList /> : null}
+        {screen === 'boss-bestiary' ? <BossBestiary /> : null}
         {screen === 'game-over' ? <GameOver victory={false} /> : null}
         {screen === 'victory' ? <GameOver victory={true} /> : null}
       </main>

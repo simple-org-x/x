@@ -40,7 +40,12 @@ export interface BuildEffect {
   build: BuildKey;
 }
 
-export type UpgradeEffect = StatEffect | BuildEffect;
+export interface LegendaryEffect {
+  kind: 'legendary';
+  skillId: 'freeze-blast' | 'purge-bolt';
+}
+
+export type UpgradeEffect = StatEffect | BuildEffect | LegendaryEffect;
 
 export interface UpgradeDef {
   id: string;
@@ -234,6 +239,22 @@ export const UPGRADES: readonly UpgradeDef[] = [
     description: 'A glowing orb circles you, damaging anything it touches.',
     weight: 1,
     effect: { kind: 'build', build: 'orbitOrb' },
+  },
+  {
+    id: 'legendary-freeze-blast',
+    tier: 'legendary',
+    name: 'Freeze Blast',
+    description: 'Freeze all non-boss enemies for 3-5 seconds. Usable once per run.',
+    weight: 2,
+    effect: { kind: 'legendary', skillId: 'freeze-blast' },
+  },
+  {
+    id: 'legendary-purge-bolt',
+    tier: 'legendary',
+    name: 'Purge Bolt',
+    description: 'Instantly kill all non-boss enemies on screen. Usable once per run.',
+    weight: 2,
+    effect: { kind: 'legendary', skillId: 'purge-bolt' },
   },
 ];
 

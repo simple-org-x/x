@@ -9,9 +9,12 @@ function fmtTime(t: number): string {
 export default function Hud() {
   const hud = useAppStore((s) => s.hud);
   const bossActive = useAppStore((s) => s.bossActive);
+  const activeSkills = useAppStore((s) => s.activeSkills);
+  const legendarySkills = useAppStore((s) => s.legendarySkills);
+  const useLegendary = useAppStore((s) => s.useLegendarySkill);
 
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
-  const xpPct = Math.max(0, Math.min(100, (hud.xp / hud.xpToNext) * 100));
+  const xpPct = Math.max(0, Math.min(100, (hud.xp / hud.xpForNext) * 100));
 
   return (
     <div className="cas-hud" aria-hidden="false">
@@ -30,16 +33,38 @@ export default function Hud() {
         <div className="cas-hud-stats">
           <div>Time: {fmtTime(hud.timeSec)}</div>
           <div>Kills: {hud.kills}</div>
+          {hud.bossKills > 0 ? <div>Bosses: {hud.bossKills}</div> : null}
           {bossActive ? <div style={{ color: 'var(--accent-hot)' }}>BOSS ACTIVE</div> : null}
         </div>
       </div>
       <div className="cas-hud-bottom">
-        <div className="cas-weapon-list">
-          {hud.weapons.map((w) => (
-            <span key={w} className="cas-weapon-chip">
-              {w}
-            </span>
-          ))}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+          <div className="cas-skills-sidebar">
+            {activeSkills.length > 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>Active Skills</div>
+            ) : null}
+            {activeSkills.map((s) => (
+              <div key={s.id} className="cas-skill-chip" data-tier={s.tier}>
+                {s.name} {s.count > 1 ? `×${s.count}` : ''}
+              </div>
+            ))}
+          </div>
+          {legendarySkills.length > 0 ? (
+            <div className="cas-legendary-skills">
+              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>Legendary</div>
+              {legendarySkills.map((ls) => (
+                <button
+                  key={ls.id}
+                  className="cas-legendary-btn"
+                  style={{ borderColor: `#${ls.color.toString(16).padStart(6, '0')}` }}
+                  onClick={() => useLegendary(ls.id)}
+                  title={ls.description}
+                >
+                  {ls.name} ({ls.charges})
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

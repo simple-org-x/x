@@ -13,39 +13,35 @@
 
 export interface BossDef {
   id: string;
+  /** Original roster id (before scaling suffix) - used for texture lookup. */
+  baseId: string;
   name: string;
   hp: number;
   damage: number;
   speed: number;
   radius: number;
-  /** XP dropped on death. */
   xp: number;
-  /** Hex color for the procedural sprite. */
+  coins: number;
   color: number;
-  /** Telegraph duration before the AoE detonates, in ms. */
   aoeTelegraphMs: number;
-  /** AoE explosion radius. */
   aoeRadius: number;
-  /** Number of bullets in the bullet-hell ring. */
   ringBulletCount: number;
-  /** Bullet speed in px/sec. */
   ringBulletSpeed: number;
-  /** Damage per ring bullet. */
   ringBulletDamage: number;
-  /** Dash speed in px/sec. */
   dashSpeed: number;
-  /** Dash duration in ms. */
   dashDurationMs: number;
 }
 
 export const BOSS_WARDEN: BossDef = {
   id: 'warden',
+  baseId: 'warden',
   name: 'The Warden',
   hp: 1500,
   damage: 25,
   speed: 60,
   radius: 38,
   xp: 100,
+  coins: 50,
   color: 0xff3060,
   aoeTelegraphMs: 1200,
   aoeRadius: 140,
@@ -55,6 +51,61 @@ export const BOSS_WARDEN: BossDef = {
   dashSpeed: 460,
   dashDurationMs: 700,
 };
+
+/** Roster of boss types - cycled through as more spawn. */
+export const BOSS_ROSTER: BossDef[] = [
+  BOSS_WARDEN,
+  {
+    ...BOSS_WARDEN,
+    id: 'crimson-reaver',
+    baseId: 'crimson-reaver',
+    name: 'Crimson Reaver',
+    color: 0xff8030,
+    ringBulletCount: 20,
+    ringBulletSpeed: 260,
+  },
+  {
+    ...BOSS_WARDEN,
+    id: 'void-monarch',
+    baseId: 'void-monarch',
+    name: 'Void Monarch',
+    color: 0xa040ff,
+    aoeRadius: 180,
+    ringBulletCount: 24,
+    dashSpeed: 540,
+  },
+  {
+    ...BOSS_WARDEN,
+    id: 'storm-titan',
+    baseId: 'storm-titan',
+    name: 'Storm Titan',
+    color: 0x40c8ff,
+    ringBulletCount: 28,
+    ringBulletSpeed: 300,
+    aoeRadius: 200,
+  },
+];
+
+/**
+ * Build a scaled boss for the given encounter number (1-indexed).
+ * Each subsequent boss is significantly stronger.
+ */
+export function makeScaledBoss(bossNumber: number): BossDef {
+  const base = BOSS_ROSTER[(bossNumber - 1) % BOSS_ROSTER.length]!;
+  const scale = 1 + (bossNumber - 1) * 0.6;
+  return {
+    ...base,
+    id: `${base.id}-${bossNumber}`,
+    baseId: base.id,
+    name: `${base.name} ${bossNumber > 1 ? `Mk.${bossNumber}` : ''}`.trim(),
+    hp: Math.floor(base.hp * scale),
+    damage: Math.floor(base.damage * (1 + (bossNumber - 1) * 0.3)),
+    xp: Math.floor(base.xp * scale),
+    coins: Math.floor(base.coins * scale),
+    ringBulletDamage: Math.floor(base.ringBulletDamage * (1 + (bossNumber - 1) * 0.25)),
+    ringBulletCount: base.ringBulletCount + (bossNumber - 1) * 2,
+  };
+}
 
 export type BossPhase = 'idle' | 'aoe-telegraph' | 'aoe-detonate' | 'bullet-hell' | 'dash';
 

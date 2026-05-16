@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { CHARACTERS } from '@/data/characters';
 import { ENEMIES, type EnemyShape } from '@/data/enemies';
 import { WEAPONS } from '@/data/weapons';
-import { BOSS_WARDEN } from '@/game/systems/Boss';
+import { BOSS_ROSTER } from '@/game/systems/Boss';
 
 /**
  * BootScene draws every sprite the game uses with `Phaser.GameObjects.Graphics`
@@ -31,7 +31,9 @@ export class BootScene extends Phaser.Scene {
     for (const e of ENEMIES) {
       this.makeShapeTexture(`enemy-${e.id}`, e.radius, e.color, e.shape);
     }
-    this.makeShapeTexture(`boss-${BOSS_WARDEN.id}`, BOSS_WARDEN.radius, BOSS_WARDEN.color, 'pentagon');
+    for (const boss of BOSS_ROSTER) {
+      this.makeShapeTexture(`boss-${boss.id}`, boss.radius, boss.color, 'pentagon');
+    }
 
     for (const w of WEAPONS) {
       this.makeCircleTexture(`bullet-${w.id}`, 5, w.color, 0xffffff, 1);

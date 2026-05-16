@@ -28,18 +28,18 @@ import {
 } from '@/game/systems/Enemies';
 import { type EnemyDef } from '@/data/enemies';
 import {
-  BOSS_WARDEN,
+  makeScaledBoss,
   makeBossState,
   tickBoss,
   type BossState,
 } from '@/game/systems/Boss';
 import { VirtualJoystick } from './VirtualJoystick';
 import type { GameEvents } from '@/game/events';
+import { useAppStore } from '@/state/store';
 
 const ARENA_W = 1600;
 const ARENA_H = 1200;
-const VICTORY_SECONDS = 15 * 60;
-const BOSS_SPAWN_SECONDS = 3 * 60;
+const BOSS_LEVEL_INTERVAL = 10; // Boss spawns at level 10, 20, 30...
 
 interface BulletData {
   damage: number;
@@ -60,6 +60,7 @@ interface SceneInit {
 export class MainScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private playerState!: PlayerState;
+  private playerNameText: Phaser.GameObjects.Text | null = null;
   private weaponRuntimes: WeaponRuntime[] = [];
   private wasdKeys!: Record<'W' | 'A' | 'S' | 'D' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT', Phaser.Input.Keyboard.Key>;
   private joystick!: VirtualJoystick;
@@ -74,16 +75,24 @@ export class MainScene extends Phaser.Scene {
   private bossTelegraph: Phaser.GameObjects.Image | null = null;
   private bossTelegraphX = 0;
   private bossTelegraphY = 0;
+  private bossHpBar: Phaser.GameObjects.Graphics | null = null;
+  private bossHpText: Phaser.GameObjects.Text | null = null;
+  private bossNameText: Phaser.GameObjects.Text | null = null;
 
   private waveIndex = 0;
   private timeSinceWaveSec = 0;
   private elapsedSec = 0;
+  private bossNumber = 0;
   private bossSpawned = false;
   private paused = false;
   private gameEnded = false;
+  private freezeTimer = 0;
 
   private events_!: GameEvents;
   private characterId: CharacterId = 'potato-soldier';
+  private godMode = false;
+  private oneHitMode = false;
+  private speedMultiplier = 1;
 
   constructor() {
     super('MainScene');
@@ -95,9 +104,11 @@ export class MainScene extends Phaser.Scene {
     this.waveIndex = 0;
     this.timeSinceWaveSec = 0;
     this.elapsedSec = 0;
+    this.bossNumber = 0;
     this.bossSpawned = false;
     this.paused = false;
     this.gameEnded = false;
+    this.freezeTimer = 0;
     this.boss = null;
     this.bossState = null;
     this.bossTelegraph = null;
@@ -127,6 +138,17 @@ export class MainScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
     this.cameras.main.setBounds(0, 0, ARENA_W, ARENA_H);
 
+    const username = useAppStore.getState().username || 'Player';
+    this.playerNameText = this.add.text(this.player.x, this.player.y + 50, username, {
+      fontFamily: 'Arial',
+      fontSize: '14px',
+      color: '#a0d8ff',
+      stroke: '#000',
+      strokeThickness: 2,
+    });
+    this.playerNameText.setOrigin(0.5);
+    this.playerNameText.setDepth(10);
+
     this.enemies = this.physics.add.group();
     this.bullets = this.physics.add.group();
     this.bossBullets = this.physics.add.group();
@@ -147,6 +169,9 @@ export class MainScene extends Phaser.Scene {
         LEFT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
         RIGHT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       };
+      kb.on('keydown-ESC', () => {
+        if (!this.gameEnded) this.togglePause();
+      });
     }
     this.joystick = new VirtualJoystick(this);
 
@@ -166,6 +191,55 @@ export class MainScene extends Phaser.Scene {
 
     this.publishHud();
     this.spawnWave();
+
+    // Expose dev hooks for tester panel
+    this.exposeDevHooks();
+  }
+
+  private exposeDevHooks(): void {
+    const w = window as unknown as { __cas_dev?: Record<string, unknown> };
+    w.__cas_dev = {
+      gainXp: (amount: number) => {
+        const { leveledUp } = gainXp(this.playerState, amount);
+        if (leveledUp) this.openLevelUpPicker();
+      },
+      forceLevelUp: () => {
+        const need = this.playerState.xpToNext - this.playerState.xp;
+        gainXp(this.playerState, need);
+        this.openLevelUpPicker();
+      },
+      spawnBossNow: () => {
+        if (this.bossSpawned || this.boss) return;
+        this.spawnBoss();
+      },
+      killBoss: () => {
+        if (!this.boss || !this.bossState) return;
+        this.bossState.hp = 0;
+        this.killBoss();
+      },
+      toggleGodMode: () => {
+        this.godMode = !this.godMode;
+        return this.godMode;
+      },
+      isGodMode: () => this.godMode,
+      setSpeed: (mul: number) => {
+        this.speedMultiplier = Math.max(0.25, Math.min(8, mul));
+      },
+      getSpeed: () => this.speedMultiplier,
+      healFull: () => {
+        this.playerState.hp = this.playerState.stats.maxHp;
+      },
+      jumpToLevel: (target: number) => {
+        const clamped = Math.max(1, Math.min(99, Math.floor(target)));
+        while (this.playerState.level < clamped) {
+          const need = this.playerState.xpToNext - this.playerState.xp;
+          this.playerState.xp = 0;
+          this.playerState.level += 1;
+          this.playerState.xpToNext = Math.floor(4 + Math.pow(this.playerState.level, 1.4) * 3);
+          void need;
+        }
+      },
+    };
   }
 
   // ---------- input ----------
@@ -194,13 +268,37 @@ export class MainScene extends Phaser.Scene {
   override update(_time: number, deltaMs: number): void {
     if (this.gameEnded) return;
     if (this.paused) return;
-    const dt = deltaMs / 1000;
+    // Apply tester speed multiplier (game-speed scaling)
+    const scaledMs = deltaMs * this.speedMultiplier;
+    const dt = scaledMs / 1000;
+    deltaMs = scaledMs;
     this.elapsedSec += dt;
+
+    if (this.godMode) {
+      this.playerState.hp = this.playerState.stats.maxHp;
+    }
+
+    // Decay freeze timer
+    if (this.freezeTimer > 0) {
+      this.freezeTimer = Math.max(0, this.freezeTimer - dt);
+    }
+
+    // Handle pending legendary skill activation
+    const pending = useAppStore.getState().pendingLegendaryActivation;
+    if (pending) {
+      useAppStore.getState().clearLegendaryActivation();
+      if (pending === 'freeze-blast') this.activateFreezeBlast();
+      else if (pending === 'purge-bolt') this.activatePurgeBolt();
+    }
 
     // Move player
     const dir = this.getMoveDir();
     const speed = this.playerState.stats.moveSpeed;
     this.player.setVelocity(dir.x * speed, dir.y * speed);
+
+    if (this.playerNameText) {
+      this.playerNameText.setPosition(this.player.x, this.player.y + 50);
+    }
 
     tickHpRegen(this.playerState, dt);
 
@@ -221,8 +319,8 @@ export class MainScene extends Phaser.Scene {
       this.spawnWave();
     }
 
-    // Boss spawn
-    if (!this.bossSpawned && this.elapsedSec >= BOSS_SPAWN_SECONDS) {
+    const levelMultiple = this.playerState.level % BOSS_LEVEL_INTERVAL === 0;
+    if (!this.bossSpawned && levelMultiple && this.playerState.level > 0) {
       this.spawnBoss();
     }
 
@@ -233,12 +331,8 @@ export class MainScene extends Phaser.Scene {
     // Cleanup off-screen bullets
     this.cullBullets();
 
-    // Victory
-    if (this.elapsedSec >= VICTORY_SECONDS) {
-      this.endRun(true);
-    }
-
     if (this.playerState.hp <= 0 && !this.gameEnded) {
+      this.particleBurst(this.player.x, this.player.y, 0xff5d8f, 40, 30, 150);
       this.endRun(false);
     }
 
@@ -251,9 +345,10 @@ export class MainScene extends Phaser.Scene {
       maxHp: this.playerState.stats.maxHp,
       level: this.playerState.level,
       xp: this.playerState.xp,
-      xpToNext: this.playerState.xpToNext,
+      xpForNext: this.playerState.xpToNext,
       timeSec: this.elapsedSec,
       kills: this.playerState.kills,
+      bossKills: this.bossNumber,
       weapons: [...this.playerState.weapons],
     });
   }
@@ -293,10 +388,16 @@ export class MainScene extends Phaser.Scene {
   private updateEnemies(_dt: number): void {
     const px = this.player.x;
     const py = this.player.y;
+    const frozen = this.freezeTimer > 0;
     this.enemies.children.iterate((obj) => {
       const e = obj as Phaser.Physics.Arcade.Sprite;
       const data = e.getData('data') as EnemyData | undefined;
       if (!data || !e.body) return true;
+      if (frozen) {
+        e.setVelocity(0, 0);
+        e.setTint(0x66ddff);
+        return true;
+      }
       const dx = px - e.x;
       const dy = py - e.y;
       const dist = Math.hypot(dx, dy) || 1;
@@ -482,18 +583,41 @@ export class MainScene extends Phaser.Scene {
   // ---------- boss ----------
   private spawnBoss(): void {
     this.bossSpawned = true;
+    const encounterNumber = this.bossNumber + 1;
+    const def = makeScaledBoss(encounterNumber);
     const pos = this.pickEdgePosition();
-    this.boss = this.physics.add.sprite(pos.x, pos.y, `boss-${BOSS_WARDEN.id}`);
+    this.boss = this.physics.add.sprite(pos.x, pos.y, `boss-${def.baseId}`);
     this.boss.setScale(2);
     this.boss.setDepth(11);
-    this.bossState = makeBossState(BOSS_WARDEN);
+    this.bossState = makeBossState(def);
+
+    this.particleBurst(pos.x, pos.y, def.color, 30, 50, 200);
     this.cameras.main.shake(300, 0.005);
-    this.events_.bossSpawn();
-    
-    // Boss body collision - damage player on contact (set up after boss spawns)
+    this.events_.bossSpawn(encounterNumber, def.name);
+
+    this.particleBurst(pos.x, pos.y, 0xff3060, 30, 50, 200);
+
+    this.bossNameText = this.add.text(this.boss.x, this.boss.y - 100, def.name, {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: '#ffaa00',
+      stroke: '#000',
+      strokeThickness: 3,
+      fontStyle: 'bold',
+    });
+    this.bossNameText.setOrigin(0.5);
+    this.bossNameText.setDepth(12);
+
+    // Boss HP bar (background)
+    this.bossHpBar = this.add.graphics();
+    this.bossHpBar.setDepth(12);
+
     this.physics.add.overlap(this.player, this.boss, () => {
       this.onPlayerBoss();
     });
+
+    // Add boss to enemies group so bullet-vs-enemies overlap handles damage reliably
+    this.enemies.add(this.boss);
   }
 
   private updateBoss(deltaMs: number): void {
@@ -513,6 +637,38 @@ export class MainScene extends Phaser.Scene {
     }
 
     const evts = tickBoss(this.bossState, deltaMs);
+
+    if (this.bossNameText) {
+      this.bossNameText.setPosition(this.boss.x, this.boss.y - 100);
+    }
+
+    if (this.bossHpBar) {
+      this.bossHpBar.clear();
+      const barW = 200;
+      const barH = 16;
+      const barX = this.boss.x - barW / 2;
+      const barY = this.boss.y - 80;
+      const hpRatio = Math.max(0, this.bossState.hp / this.bossState.def.hp);
+      this.bossHpBar.fillStyle(0x333333, 1);
+      this.bossHpBar.fillRect(barX, barY, barW, barH);
+      this.bossHpBar.fillStyle(0xff3060, 1);
+      this.bossHpBar.fillRect(barX, barY, barW * hpRatio, barH);
+      this.bossHpBar.lineStyle(2, 0xffaa00, 1);
+      this.bossHpBar.strokeRect(barX, barY, barW, barH);
+
+      // HP percentage text
+      if (!this.bossHpText) {
+        this.bossHpText = this.add.text(barX + barW / 2, barY + barH / 2, '', {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: '#ffffff',
+          stroke: '#000',
+          strokeThickness: 2,
+        }).setOrigin(0.5).setDepth(13);
+      }
+      this.bossHpText.setPosition(barX + barW / 2, barY + barH / 2);
+      this.bossHpText.setText(`${Math.round(hpRatio * 100)}%`);
+    }
 
     if (evts.fireRing) {
       this.fireBossRing();
@@ -556,19 +712,28 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  private killBoss(): void {
-    if (!this.boss) return;
+   private killBoss(): void {
+    if (!this.boss || !this.bossState) return;
+    const bx = this.boss.x;
+    const by = this.boss.y;
+    const xpDrop = this.bossState.def.xp;
+    const coinDrop = this.bossState.def.coins;
+    const defeated = this.bossNumber + 1;
+    this.bossNumber = defeated;
     this.cameras.main.shake(400, 0.012);
+    this.particleBurst(bx, by, 0xffd24a, 50, 40, 180);
+    this.celebrateBossKill(bx, by);
     for (let i = 0; i < 25; i += 1) {
       const angle = (i / 25) * Math.PI * 2;
       const gem = this.gems.create(
-        this.boss.x + Math.cos(angle) * 20,
-        this.boss.y + Math.sin(angle) * 20,
+        bx + Math.cos(angle) * 20,
+        by + Math.sin(angle) * 20,
         'xp-gem',
       ) as Phaser.Physics.Arcade.Sprite;
-      gem.setData('xp', 4);
+      gem.setData('xp', Math.max(4, Math.floor(xpDrop / 25)));
       gem.setDepth(4);
     }
+    useAppStore.getState().addCoins(coinDrop);
     this.boss.destroy();
     this.boss = null;
     this.bossState = null;
@@ -576,7 +741,70 @@ export class MainScene extends Phaser.Scene {
       this.bossTelegraph.destroy();
       this.bossTelegraph = null;
     }
-    this.endRun(true);
+    if (this.bossHpBar) {
+      this.bossHpBar.destroy();
+      this.bossHpBar = null;
+    }
+    if (this.bossNameText) {
+      this.bossNameText.destroy();
+      this.bossNameText = null;
+    }
+    this.events_.bossDefeated(defeated);
+    // Allow next boss to spawn at next level multiple
+    this.bossSpawned = false;
+  }
+
+  private celebrateBossKill(x: number, y: number): void {
+    for (let i = 0; i < 40; i += 1) {
+      const angle = (i / 40) * Math.PI * 2;
+      const dist = 60 + Math.random() * 80;
+      const p = this.add.circle(x, y, 4 + Math.random() * 4, 0xffd24a, 1);
+      p.setDepth(20);
+      this.tweens.add({
+        targets: p,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        alpha: 0,
+        scale: 0.2,
+        duration: 800 + Math.random() * 400,
+        onComplete: () => p.destroy(),
+      });
+    }
+    const txt = this.add.text(x, y - 60, 'BOSS DEFEATED!', {
+      fontFamily: 'Arial',
+      fontSize: '32px',
+      color: '#ffd24a',
+      stroke: '#000',
+      strokeThickness: 4,
+      fontStyle: 'bold',
+    });
+    txt.setOrigin(0.5);
+    txt.setDepth(25);
+    this.tweens.add({
+      targets: txt,
+      y: y - 140,
+      alpha: 0,
+      scale: 1.5,
+      duration: 1800,
+      ease: 'Power2',
+      onComplete: () => txt.destroy(),
+    });
+    const flash = this.add.rectangle(
+      this.cameras.main.scrollX + this.cameras.main.width / 2,
+      this.cameras.main.scrollY + this.cameras.main.height / 2,
+      this.cameras.main.width,
+      this.cameras.main.height,
+      0xffd24a,
+      0.5,
+    );
+    flash.setScrollFactor(0);
+    flash.setDepth(30);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 400,
+      onComplete: () => flash.destroy(),
+    });
   }
 
   // ---------- level up ----------
@@ -587,7 +815,25 @@ export class MainScene extends Phaser.Scene {
     const cards = drawUpgrades(3, this.playerState.stats.luck);
     this.events_.levelUp(cards, (chosen) => {
       applyUpgrade(this.playerState, chosen);
-      // Heal slightly on level up to keep the game readable.
+      
+      if (chosen.effect.kind === 'build') {
+        this.events_.skillGained({
+          id: chosen.id,
+          name: chosen.name,
+          description: chosen.description,
+          tier: chosen.tier,
+          count: 1,
+        });
+      } else if (chosen.effect.kind === 'legendary') {
+        this.events_.legendaryGained({
+          id: chosen.effect.skillId,
+          name: chosen.name,
+          description: chosen.description,
+          color: chosen.effect.skillId === 'freeze-blast' ? 0x66ddff : 0xffd24a,
+          charges: 1,
+        });
+      }
+      
       this.playerState.hp = Math.min(this.playerState.stats.maxHp, this.playerState.hp + 5);
       this.paused = false;
       this.physics.world.resume();
@@ -603,9 +849,58 @@ export class MainScene extends Phaser.Scene {
       timeSec: Math.floor(this.elapsedSec),
       kills: this.playerState.kills,
       level: this.playerState.level,
+      bossKills: this.bossNumber,
       victory,
     };
     if (victory) this.events_.victory(summary);
     else this.events_.gameOver(summary);
+  }
+
+  private activateFreezeBlast(): void {
+    this.freezeTimer = 3 + Math.random() * 2;
+    this.cameras.main.flash(300, 100, 200, 255);
+  }
+
+  private activatePurgeBolt(): void {
+    const killed: Phaser.Physics.Arcade.Sprite[] = [];
+    this.enemies.children.iterate((obj) => {
+      const e = obj as Phaser.Physics.Arcade.Sprite;
+      if (e.active) killed.push(e);
+      return true;
+    });
+    for (const e of killed) {
+      const data = e.getData('data') as EnemyData | undefined;
+      if (data) this.killEnemy(e, data.def);
+    }
+    this.cameras.main.flash(400, 255, 220, 100);
+  }
+
+  private togglePause(): void {
+    this.paused = !this.paused;
+    if (this.paused) {
+      this.physics.world.pause();
+      useAppStore.getState().setScreen('paused');
+    } else {
+      this.physics.world.resume();
+      useAppStore.getState().setScreen('playing');
+    }
+  }
+
+  private particleBurst(x: number, y: number, color: number, count: number, minDist: number, maxDist: number): void {
+    for (let i = 0; i < count; i += 1) {
+      const angle = (i / count) * Math.PI * 2;
+      const dist = minDist + Math.random() * (maxDist - minDist);
+      const p = this.add.circle(x, y, 3 + Math.random() * 3, color, 1);
+      p.setDepth(15);
+      this.tweens.add({
+        targets: p,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        alpha: 0,
+        scale: 0.3,
+        duration: 600 + Math.random() * 400,
+        onComplete: () => p.destroy(),
+      });
+    }
   }
 }
