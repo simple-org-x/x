@@ -1,0 +1,23 @@
+{
+  "name": "crypto-arena-survivors",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crypto Arena Survivors: a browser-based auto-battler / arena survival roguelite with optional crypto rewards.",
+  "workspaces": [
+    "client",
+    "contracts"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present",
+    "dev:client": "npm -w client run dev --if-present",
+    "dev:server": "echo 'Use `make dev-server` to run the Go API'"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=9"
+  }
+}
