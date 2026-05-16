@@ -1,0 +1,11 @@
+{
+  "name": "Crypto Arena Survivors",
+  "short_name": "CAS",
+  "description": "A browser-based auto-battler / arena survival roguelite.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": []
+}
