@@ -2,15 +2,34 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 from rich.console import Console
 
 from . import __version__
+from .agents import (
+    AnalystAgent,
+    ExecutorAgent,
+    ResponsibleAgent,
+    ReviewerAgent,
+    load_or_generate_responsible_secret,
+)
+from .audit import AuditLog
+from .config import AppConfig, load_config
 from .credentials import CredentialRecord, CredentialStore
+from .dex import build_adapter
+from .dex.paper import PaperAdapter
+from .llm import FakeLLMClient, build_llm_client
+from .llm.base import LLMClient
+from .models import AgentContext, Market, Ticker
+from .orchestrator import TradingLoop
+from .risk import RiskLimits
 
 app = typer.Typer(
     name="dex-ai-trader",
@@ -26,13 +45,6 @@ SUPPORTED_VENUES = ("hyperliquid", "asterdex", "paper")
 def version() -> None:
     """Print the package version."""
     console.print(__version__)
-
-
-@app.command()
-def run() -> None:
-    """Run the trading loop (stub - wired up in FEAT-004)."""
-    console.print("not implemented yet")
-    raise typer.Exit(code=0)
 
 
 def _store_path_from_env(default: Path | None = None) -> Path | None:
@@ -179,6 +191,307 @@ def connect(
         f"{store.store_path}."
     )
     console.print("You only need to run connect once per venue.")
+
+
+# -- run --------------------------------------------------------------------
+
+
+LIVE_BANNER = (
+    "[bold red]==============================[/bold red]\n"
+    "[bold red] LIVE TRADING IS ENABLED [/bold red]\n"
+    "[bold red]==============================[/bold red]"
+)
+
+
+def _resolve_config(config_path: Path | None) -> AppConfig:
+    if config_path is None:
+        return AppConfig()
+    return load_config(config_path)
+
+
+def _read_passphrase(no_input: bool) -> str:
+    env_value = os.environ.get("DEX_AI_PASSPHRASE")
+    if env_value is not None:
+        return env_value
+    if no_input:
+        raise typer.BadParameter("DEX_AI_PASSPHRASE must be set when --no-input is used")
+    return str(typer.prompt("Passphrase", hide_input=True))
+
+
+@app.command()
+def run(
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config", help="Path to YAML config file."),
+    ] = None,
+    once: Annotated[
+        bool,
+        typer.Option("--once/--continuous", help="Run a single cycle then exit."),
+    ] = True,
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live/--no-live",
+            help="Required (with config.run.live=true) for real trades.",
+        ),
+    ] = False,
+    venue_override: Annotated[
+        str | None,
+        typer.Option("--venue", help="Override config.venue.name."),
+    ] = None,
+    symbol_override: Annotated[
+        str | None,
+        typer.Option("--symbol", help="Override config.run.symbols (single symbol)."),
+    ] = None,
+    no_input: Annotated[
+        bool,
+        typer.Option("--no-input", help="Read passphrase from DEX_AI_PASSPHRASE only."),
+    ] = False,
+    store_path: Annotated[
+        Path | None,
+        typer.Option("--store-path", help="Override credential store path."),
+    ] = None,
+) -> None:
+    """Run one (``--once``) or many (``--continuous``) decision cycles."""
+    try:
+        cfg = _resolve_config(config_path)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Failed to load config:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if venue_override is not None:
+        cfg = cfg.model_copy(
+            update={"venue": cfg.venue.model_copy(update={"name": venue_override})}
+        )
+    if symbol_override is not None:
+        cfg = cfg.model_copy(
+            update={"run": cfg.run.model_copy(update={"symbols": [symbol_override]})}
+        )
+
+    # Live trading is gated by BOTH the CLI flag AND the config switch.
+    if live and not cfg.run.live:
+        console.print(
+            "[red]--live was passed but config.run.live=false; "
+            "set run.live=true (and run.dry_run=false, credentials.live=true) "
+            "in your config to confirm live trading.[/red]"
+        )
+        raise typer.Exit(code=2)
+    if cfg.run.live and not live:
+        console.print(
+            "[red]config.run.live=true but --live was not passed on the CLI; "
+            "pass --live to confirm.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    if cfg.run.live:
+        console.print(LIVE_BANNER)
+
+    passphrase = _read_passphrase(no_input=no_input)
+
+    resolved_store_path = store_path if store_path is not None else _store_path_from_env()
+    store = CredentialStore(store_path=resolved_store_path)
+    store.unlock(passphrase)
+
+    responsible_secret = load_or_generate_responsible_secret(store, passphrase)
+
+    # Build LLM and adapters.
+    try:
+        llm = build_llm_client(cfg.llm, store)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Failed to build LLM client:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    venue_name = cfg.venue.name
+    venue_credentials = store.get(venue_name) if venue_name != "paper" else None
+
+    paper_adapter = PaperAdapter()
+    if cfg.run.live:
+        try:
+            live_adapter = build_adapter(venue_name, cfg.venue, venue_credentials)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]Failed to build live adapter:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+    else:
+        # In dry-run mode the live adapter is never called; reuse paper.
+        live_adapter = paper_adapter
+
+    audit = AuditLog()
+
+    loop_obj = TradingLoop(
+        config=cfg,
+        dex_live=live_adapter,
+        dex_paper=paper_adapter,
+        llm=llm,
+        audit=audit,
+        responsible_secret=responsible_secret,
+    )
+
+    symbols = list(cfg.run.symbols) or ([symbol_override] if symbol_override else [])
+    if not symbols:
+        console.print(
+            "[red]No symbols configured. Set run.symbols in config or pass --symbol.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    if once:
+        report = asyncio.run(loop_obj.run_cycle(symbols[0]))
+        if report is None:
+            console.print("[yellow]Cycle complete: no order placed.[/yellow]")
+        else:
+            console.print(
+                f"[green]Cycle complete:[/green] status={report.status} "
+                f"size={report.filled_size} avg_price={report.avg_price}"
+            )
+    else:
+        asyncio.run(loop_obj.run_forever())
+
+
+# -- paper shorthand --------------------------------------------------------
+
+
+@app.command()
+def paper(
+    scenario: Annotated[
+        Path | None,
+        typer.Option(
+            "--scenario",
+            help="Path to a paper scenario YAML (default: examples/paper_scenario.yaml).",
+        ),
+    ] = None,
+) -> None:
+    """Run one deterministic Analyst -> Reviewer -> Responsible -> Executor cycle.
+
+    Uses :class:`FakeLLMClient` scripted from the YAML scenario plus the
+    in-memory :class:`PaperAdapter`. No API keys, no network, no credential
+    store required.
+    """
+    scenario_path = scenario if scenario is not None else _default_scenario_path()
+    if not scenario_path.exists():
+        console.print(f"[red]Scenario file not found:[/red] {scenario_path}")
+        raise typer.Exit(code=2)
+
+    with scenario_path.open("r", encoding="utf-8") as fh:
+        scenario_data = yaml.safe_load(fh) or {}
+    if not isinstance(scenario_data, dict):
+        console.print("[red]Invalid scenario file:[/red] expected a mapping at top level")
+        raise typer.Exit(code=2)
+
+    symbol = str(scenario_data.get("symbol", "BTC-USD"))
+    mark_price = float(scenario_data.get("mark_price", 30_000.0))
+    initial_cash = float(scenario_data.get("initial_cash", 100_000.0))
+    responses = list(scenario_data.get("responses", []))
+    if len(responses) < 3:
+        console.print(
+            "[red]Scenario must include at least 3 responses "
+            "(analyst, reviewer, responsible).[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    llm: LLMClient = FakeLLMClient.from_sequence(responses)
+
+    paper_adapter = PaperAdapter(
+        initial_cash=initial_cash,
+        mark_price=lambda _s: mark_price,
+        markets=[
+            Market(
+                symbol=symbol,
+                base=symbol.split("-")[0],
+                quote=symbol.split("-")[-1],
+                venue="paper",
+                min_size=0.0001,
+                price_precision=2,
+            )
+        ],
+    )
+
+    risk_limits = RiskLimits(
+        max_notional_usd=1_000_000.0,
+        max_leverage=10.0,
+        symbol_allowlist=[symbol],
+        daily_loss_cap_usd=1_000_000.0,
+        min_confidence=0.0,
+    )
+
+    # Use an in-memory HMAC secret; the scenario does not touch the credential store.
+    responsible_secret = os.urandom(32)
+
+    audit = AuditLog()
+
+    analyst = AnalystAgent(llm=llm, model="fake-paper")
+    reviewer = ReviewerAgent(llm=llm, model="fake-paper")
+    responsible = ResponsibleAgent(
+        llm=llm,
+        risk_limits=risk_limits,
+        responsible_secret=responsible_secret,
+        audit=audit,
+        model="fake-paper",
+    )
+    executor = ExecutorAgent(
+        dex=paper_adapter,
+        responsible_secret=responsible_secret,
+        is_live=False,
+        audit=audit,
+    )
+
+    async def _run() -> None:
+        ticker = Ticker(
+            symbol=symbol,
+            mid=mark_price,
+            bid=mark_price,
+            ask=mark_price,
+            ts=datetime.now(tz=UTC),
+        )
+        ctx = AgentContext(
+            markets=await paper_adapter.get_markets(),
+            tickers={symbol: ticker},
+            positions=await paper_adapter.get_positions(),
+            balances=await paper_adapter.get_balances(),
+            history=[],
+            notes="paper scenario",
+        )
+        audit.append("cycle_start", {"symbol": symbol, "live": False})
+
+        proposed = await analyst.run(ctx, default_symbol=symbol)
+        audit.append("analyst", {"trade": proposed.model_dump(mode="json")})
+        if proposed.size == 0:
+            audit.append("no_trade", {"reason": "analyst_hold"})
+            audit.append("cycle_complete", {"symbol": symbol, "outcome": "hold"})
+            console.print("[yellow]Analyst held; no order placed.[/yellow]")
+            return
+
+        reviewed = await reviewer.run(proposed, ctx)
+        audit.append(
+            "reviewer",
+            {"verdict": reviewed.verdict, "critique": reviewed.critique},
+        )
+
+        approved = await responsible.run(reviewed, ctx)
+        if approved is None:
+            audit.append("cycle_complete", {"symbol": symbol, "outcome": "no_order"})
+            console.print("[yellow]Responsible vetoed; no order placed.[/yellow]")
+            return
+
+        report = await executor.run(approved, ctx)
+        audit.append(
+            "cycle_complete",
+            {"symbol": symbol, "outcome": "placed", "decision_id": str(approved.decision_id)},
+        )
+
+        console.print(
+            f"[green]PAPER FILL:[/green] symbol={symbol} side={approved.trade.side} "
+            f"size={report.filled_size} avg_price={report.avg_price} "
+            f"status={report.status} decision_id={approved.decision_id}"
+        )
+
+    asyncio.run(_run())
+
+
+def _default_scenario_path() -> Path:
+    """Resolve the bundled examples/paper_scenario.yaml relative to the repo root."""
+    here = Path(__file__).resolve()
+    # src/dex_ai_trader/cli.py -> repo_root/examples/paper_scenario.yaml
+    repo_root = here.parents[2]
+    return repo_root / "examples" / "paper_scenario.yaml"
 
 
 if __name__ == "__main__":  # pragma: no cover

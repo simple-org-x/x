@@ -16,7 +16,7 @@ def test_help_lists_commands() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
-    for cmd in ("version", "connect", "run"):
+    for cmd in ("version", "connect", "run", "paper"):
         assert cmd in result.output
 
 
@@ -25,13 +25,6 @@ def test_version_prints_package_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert "0.1.0" in result.output
-
-
-def test_run_is_a_stub() -> None:
-    runner = CliRunner()
-    result = runner.invoke(app, ["run"])
-    assert result.exit_code == 0
-    assert "not implemented yet" in result.output
 
 
 def test_connect_paper_no_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
