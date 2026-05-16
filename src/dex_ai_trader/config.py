@@ -78,6 +78,12 @@ class AppConfig(BaseSettings):
                 raise ValueError(
                     "run.live=true requires credentials.live=true to confirm live trading"
                 )
+            if self.venue.name == "paper":
+                raise ValueError(
+                    "run.live=true is incompatible with venue.name='paper': the paper "
+                    "adapter cannot place real orders, but is_live=True would audit as "
+                    "'executor_live_result'. Set venue.name to a real venue or run.live=false."
+                )
         return self
 
     @classmethod

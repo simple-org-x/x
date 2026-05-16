@@ -200,9 +200,11 @@ risk:
   symbol_allowlist:          # if non-empty, only these symbols are tradable
     - BTC-USD
     - ETH-USD
-  daily_loss_cap_usd: 200.0  # halts new orders when realized PnL drops past this
+  daily_loss_cap_usd: 200.0  # PLACEHOLDER, see note below
   min_confidence: 0.55       # analyst confidence threshold
 ```
+
+> **Note on `daily_loss_cap_usd`:** this limit is wired through `ResponsibleAgent` and is enforced when `AgentContext.history` contains the right execution reports, but the orchestrator does not yet persist `ExecutionReport`s across cycles (`history` is reset to `[]` at the start of every cycle), and the realized-PnL proxy in `risk._daily_realized_pnl` sums positive notional rather than signed PnL. As a result `daily_loss_cap_usd` does **not** fire in normal operation. Treat it as a placeholder until persistence and side-aware PnL accounting land. (TODO.)
 
 Tuning tips:
 
@@ -309,7 +311,7 @@ Conventions:
 * `src/` layout. Source under `src/dex_ai_trader/`, tests under `tests/`.
 * Type hints are required. `mypy --strict` runs on `src/`.
 * Public API lives under the `dex_ai_trader.*` namespace.
-* No real network calls in the default test run. Hyperliquid and AsterDex integration tests are gated behind `HL_INTEGRATION=1` and `ASTER_INTEGRATION=1`.
+* No real network calls in the default test run. The AsterDex tests use `respx` to mock HTTP; the Hyperliquid tests use `pytest.importorskip("hyperliquid")` and monkeypatched SDK objects, so they are skipped if the optional extra is not installed.
 * No real LLM calls in tests; use `FakeLLMClient`.
 * See `examples/config.example.yaml` for a fully commented config template.
 

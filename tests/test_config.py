@@ -99,12 +99,30 @@ def test_live_ok_when_both_flags_set(monkeypatch: pytest.MonkeyPatch) -> None:
 
     cfg = AppConfig.model_validate(
         {
+            "venue": {"name": "asterdex"},
             "run": {"dry_run": False, "live": True, "symbols": ["BTC-USD"]},
             "credentials": {"live": True},
         }
     )
     assert cfg.run.live is True
     assert cfg.credentials.live is True
+
+
+def test_live_with_venue_paper_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """venue.name='paper' is incompatible with run.live=true."""
+    for key in list(__import__("os").environ):
+        if key.startswith("DEX_AI_"):
+            monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        AppConfig.model_validate(
+            {
+                "venue": {"name": "paper"},
+                "run": {"dry_run": False, "live": True, "symbols": ["BTC-USD"]},
+                "credentials": {"live": True},
+            }
+        )
+    assert "paper" in str(exc_info.value)
 
 
 def test_load_config_missing_file_uses_defaults(

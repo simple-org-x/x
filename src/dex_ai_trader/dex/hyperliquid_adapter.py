@@ -36,6 +36,13 @@ if TYPE_CHECKING:  # pragma: no cover - import-only for type hints
     from hyperliquid.info import Info
 
 
+# Protective slippage band applied to market orders when the analyst does not
+# supply an explicit ``limit_price``. 1% is intentionally wide for sandbox use;
+# operators with tighter tolerances should set ``order_type='limit'`` and
+# supply their own ``limit_price``.
+DEFAULT_MARKET_SLIP_BPS = 100  # 100 bps = 1.0%
+
+
 class HyperliquidAdapter(DexAdapter):
     """Async wrapper around the synchronous hyperliquid SDK.
 
@@ -167,13 +174,30 @@ class HyperliquidAdapter(DexAdapter):
             limit_px = float(trade.limit_price)
             order_type: dict[str, Any] = {"limit": {"tif": "Gtc"}}
         else:
-            # Hyperliquid market orders are simulated as IoC limits at a
-            # protective slippage; we let the SDK pick the slip when given
-            # ``tif='Ioc'``. Using ``all_mids`` would be racy, so we pass the
-            # mid we last saw if available; otherwise let the caller supply
-            # ``limit_price`` even for market orders.
-            limit_px = float(trade.limit_price) if trade.limit_price is not None else 0.0
+            # Hyperliquid does not have a native "market" order type; the SDK
+            # accepts an IoC limit at a slip-protected price. When the analyst
+            # supplied a ``limit_price`` we honour it; otherwise we read the
+            # current mid via ``info.all_mids`` and apply a 1% protective band
+            # (cap on a buy, floor on a sell). Sending ``limit_px=0.0``, as a
+            # previous version did, is functionally a "fill at any price"
+            # instruction on the sell side and an unfillable order on the buy
+            # side, neither of which matches the contract for a market order.
             order_type = {"limit": {"tif": "Ioc"}}
+            if trade.limit_price is not None:
+                limit_px = float(trade.limit_price)
+            else:
+                try:
+                    limit_px = await self._market_slip_price(trade.symbol, is_buy)
+                except Exception as exc:  # noqa: BLE001 - any SDK / parse error
+                    self.logger.exception("hyperliquid market slip-price lookup failed")
+                    return ExecutionReport(
+                        decision_id=approved.decision_id,
+                        venue="hyperliquid",
+                        status="rejected",
+                        filled_size=0.0,
+                        avg_price=0.0,
+                        error=f"unable to derive market slip price: {exc}",
+                    )
 
         try:
             response = await asyncio.to_thread(
@@ -221,6 +245,25 @@ class HyperliquidAdapter(DexAdapter):
                     self.logger.debug("error closing hyperliquid session", exc_info=True)
 
     # -- helpers ----------------------------------------------------------
+
+    async def _market_slip_price(self, symbol: str, is_buy: bool) -> float:
+        """Compute a slip-protected limit price for an IoC market order.
+
+        Reads the latest mid via ``info.all_mids`` and shifts it by
+        :data:`DEFAULT_MARKET_SLIP_BPS` basis points. Buys cap at
+        ``mid * (1 + bps/10000)`` (we are willing to pay up to that),
+        sells floor at ``mid * (1 - bps/10000)`` (we will accept down to
+        that). Returns a strictly positive float; raises ``ValueError`` if
+        the mid is missing or non-positive.
+        """
+        mids = await asyncio.to_thread(self._info.all_mids)
+        if not isinstance(mids, dict) or symbol not in mids:
+            raise ValueError(f"no mid available for {symbol}")
+        mid = float(mids[symbol])
+        if mid <= 0.0:
+            raise ValueError(f"mid for {symbol} is non-positive: {mid}")
+        bps = DEFAULT_MARKET_SLIP_BPS / 10_000.0
+        return mid * (1.0 + bps) if is_buy else mid * (1.0 - bps)
 
     @staticmethod
     def _parse_order_response(approved: ApprovedOrder, response: Any) -> ExecutionReport:
@@ -294,4 +337,4 @@ class HyperliquidAdapter(DexAdapter):
         )
 
 
-__all__ = ["HyperliquidAdapter"]
+__all__ = ["HyperliquidAdapter", "DEFAULT_MARKET_SLIP_BPS"]

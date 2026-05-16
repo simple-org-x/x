@@ -88,7 +88,11 @@ class AnthropicChatClient:
         try:
             response = await asyncio.to_thread(lambda: self._client.messages.create(**kwargs))
         except Exception as exc:  # noqa: BLE001 - SDK raises a variety of types
-            raise LLMError(self._scrub(str(exc))) from exc
+            # ``from None`` suppresses the chained __cause__ so the default
+            # traceback formatter does not print the original SDK exception's
+            # repr (which on some SDKs contains the api_key embedded in
+            # request URLs).
+            raise LLMError(self._scrub(str(exc))) from None
 
         value = _extract_tool_input(response)
         if not isinstance(value, dict):

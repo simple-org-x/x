@@ -34,7 +34,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..audit import AuditLog
-from ..credentials import CredentialRecord, CredentialStore
+from ..credentials import CredentialRecord, CredentialStore, CredentialStoreError
 from ..models import AgentContext, ApprovedOrder, ProposedTrade, ReviewedTrade
 from ..risk import RiskLimits, check_order
 from .base import Agent
@@ -69,16 +69,22 @@ def canonical_payload(
     decision_id: uuid.UUID,
     trade: ProposedTrade,
     approved_at: datetime,
+    responsible_id: str,
 ) -> bytes:
-    """Stable canonical JSON for ``(decision_id, trade, approved_at)``.
+    """Stable canonical JSON for ``(decision_id, trade, approved_at, responsible_id)``.
 
     Uses ``json.dumps(..., sort_keys=True, separators=(',', ':'), default=str)``
     so the executor and the responsible agent always serialise identically.
+
+    Binding ``responsible_id`` into the signature ensures an attacker cannot
+    take a captured ``ApprovedOrder`` and replay it with a swapped
+    ``responsible_id``: any change invalidates the HMAC.
     """
     payload = {
         "decision_id": str(decision_id),
         "trade": trade.model_dump(mode="json"),
         "approved_at": approved_at.isoformat(),
+        "responsible_id": responsible_id,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
@@ -88,9 +94,14 @@ def sign_trade(
     decision_id: uuid.UUID,
     trade: ProposedTrade,
     approved_at: datetime,
+    responsible_id: str,
 ) -> str:
-    """Return the hex HMAC-SHA256 signature for ``(decision_id, trade, approved_at)``."""
-    payload = canonical_payload(decision_id, trade, approved_at)
+    """Return the hex HMAC-SHA256 signature for the canonical payload.
+
+    The payload covers ``decision_id``, the full ``trade`` dump,
+    ``approved_at``, and ``responsible_id``; see :func:`canonical_payload`.
+    """
+    payload = canonical_payload(decision_id, trade, approved_at, responsible_id)
     return hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
 
@@ -103,11 +114,22 @@ def load_or_generate_responsible_secret(
 ) -> bytes:
     """Load the HMAC secret from ``store``, generating + persisting if absent.
 
-    Requires the store to be unlocked (or unlockable with ``passphrase``). The
-    secret is stored hex-encoded in ``CredentialRecord.extra['hmac_secret']``
-    under venue ``'responsible'`` so the existing credential schema can
-    accommodate it without changes.
+    Requires the store to already exist on disk (i.e. the user has run
+    ``dex-ai-trader connect <venue>`` at least once). If the store file is
+    missing, raises :class:`CredentialStoreError`: silently bootstrapping a
+    fresh store from the supplied passphrase risks writing the secret under a
+    typo'd passphrase that the user cannot reproduce on the next run.
+
+    The secret is stored hex-encoded in
+    ``CredentialRecord.extra['hmac_secret']`` under venue ``'responsible'`` so
+    the existing credential schema can accommodate it without changes.
     """
+    if not store.exists():
+        raise CredentialStoreError(
+            "credential store does not exist; run 'dex-ai-trader connect <venue>' "
+            "at least once before invoking 'run' so the responsible HMAC secret "
+            "is not bootstrapped under an unverified passphrase"
+        )
     if not store.is_unlocked():
         store.unlock(passphrase)
 
@@ -233,7 +255,7 @@ class ResponsibleAgent(Agent):
         # Step 3: mint the ApprovedOrder.
         decision_id = uuid.uuid4()
         approved_at = datetime.now(tz=UTC)
-        signature = sign_trade(self._secret, decision_id, candidate, approved_at)
+        signature = sign_trade(self._secret, decision_id, candidate, approved_at, self.agent_id)
         approved = ApprovedOrder(
             trade=candidate,
             decision_id=decision_id,

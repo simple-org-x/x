@@ -109,9 +109,13 @@ class OpenAIChatClient:
                         lambda: self._client.chat.completions.create(**fallback_kwargs)
                     )
                 except Exception as exc2:  # noqa: BLE001
-                    raise LLMError(self._scrub(str(exc2))) from exc2
+                    # ``from None`` suppresses the chained __cause__ so the
+                    # default traceback formatter does not print the original
+                    # SDK exception's repr (which on some SDKs contains the
+                    # api_key embedded in request URLs).
+                    raise LLMError(self._scrub(str(exc2))) from None
             else:
-                raise LLMError(self._scrub(str(exc))) from exc
+                raise LLMError(self._scrub(str(exc))) from None
 
         content = _extract_content(response)
         try:

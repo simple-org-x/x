@@ -38,21 +38,25 @@ def _reference_price(trade: ProposedTrade, ctx: AgentContext) -> float | None:
 
 
 def _daily_realized_pnl(ctx: AgentContext) -> float:
-    """Sum a crude pnl proxy from execution history.
+    """Sum a placeholder PnL proxy from execution history.
 
-    For this skeleton we use ``filled_size * avg_price`` signed by status; in a
-    fuller implementation we'd track realized vs unrealized separately. The
-    important property here is that reports with explicit ``error`` or
-    ``rejected`` status do not contribute, and the function is deterministic.
+    .. warning::
+
+        This is a deliberate placeholder. The orchestrator does not yet
+        populate ``ctx.history`` between cycles, so in normal operation this
+        function returns ``0.0`` and ``daily_loss_cap_usd`` never fires. See
+        ``README.md`` and ``docs/architecture.md`` for the TODO.
+
+    The proxy sums ``filled_size * avg_price`` over filled / partial / paper
+    reports. ``ExecutionReport.filled_size`` is non-negative for every
+    adapter (paper, AsterDex, Hyperliquid all report magnitudes), so this is
+    a notional sum, not realised PnL. A future feature will replace this
+    with side-aware PnL accounting and persistence across cycles.
     """
     pnl = 0.0
     for report in ctx.history:
         if report.status in {"rejected", "submitted"}:
             continue
-        # The history may stash signed PnL in avg_price * filled_size with
-        # convention: negative filled_size means a loss-realizing close. This
-        # is intentionally simple; downstream features will provide a richer
-        # accounting model.
         pnl += report.filled_size * report.avg_price
     return pnl
 

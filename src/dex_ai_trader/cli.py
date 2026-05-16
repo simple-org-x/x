@@ -3,33 +3,36 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
-from datetime import UTC, datetime
+import tempfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import yaml
 from rich.console import Console
 
 from . import __version__
-from .agents import (
-    AnalystAgent,
-    ExecutorAgent,
-    ResponsibleAgent,
-    ReviewerAgent,
-    load_or_generate_responsible_secret,
-)
+from .agents import load_or_generate_responsible_secret
 from .audit import AuditLog
-from .config import AppConfig, load_config
+from .config import (
+    AppConfig,
+    CredentialsConfig,
+    LLMConfig,
+    RiskConfig,
+    RunConfig,
+    VenueConfig,
+    load_config,
+)
 from .credentials import CredentialRecord, CredentialStore
 from .dex import build_adapter
 from .dex.paper import PaperAdapter
 from .llm import FakeLLMClient, build_llm_client
 from .llm.base import LLMClient
-from .models import AgentContext, Market, Ticker
+from .logging_setup import configure_logging
+from .models import Market
 from .orchestrator import TradingLoop
-from .risk import RiskLimits
 
 app = typer.Typer(
     name="dex-ai-trader",
@@ -157,6 +160,8 @@ def connect(
     ] = None,
 ) -> None:
     """One-time interactive wizard that saves encrypted credentials for a venue."""
+    # Install the redaction filter on the root logger before anything else.
+    configure_logging()
     if venue not in SUPPORTED_VENUES:
         raise typer.BadParameter(
             f"Unsupported venue: {venue}. Supported: {', '.join(SUPPORTED_VENUES)}"
@@ -253,6 +258,11 @@ def run(
     ] = None,
 ) -> None:
     """Run one (``--once``) or many (``--continuous``) decision cycles."""
+    # Install the redaction filter on the root logger BEFORE anything that
+    # might log. Adapter and agent ``self.logger.exception(...)`` calls would
+    # otherwise emit raw values to stderr.
+    configure_logging()
+
     try:
         cfg = _resolve_config(config_path)
     except Exception as exc:  # noqa: BLE001
@@ -292,7 +302,11 @@ def run(
     store = CredentialStore(store_path=resolved_store_path)
     store.unlock(passphrase)
 
-    responsible_secret = load_or_generate_responsible_secret(store, passphrase)
+    try:
+        responsible_secret = load_or_generate_responsible_secret(store, passphrase)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Failed to load responsible secret:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
     # Build LLM and adapters.
     try:
@@ -364,7 +378,13 @@ def paper(
     Uses :class:`FakeLLMClient` scripted from the YAML scenario plus the
     in-memory :class:`PaperAdapter`. No API keys, no network, no credential
     store required.
+
+    Internally this routes through :meth:`TradingLoop.run_cycle` so the
+    audit-event vocabulary stays identical to the production ``run`` command.
     """
+    # Install the redaction filter before any agent logs.
+    configure_logging()
+
     scenario_path = scenario if scenario is not None else _default_scenario_path()
     if not scenario_path.exists():
         console.print(f"[red]Scenario file not found:[/red] {scenario_path}")
@@ -404,86 +424,71 @@ def paper(
         ],
     )
 
-    risk_limits = RiskLimits(
-        max_notional_usd=1_000_000.0,
-        max_leverage=10.0,
-        symbol_allowlist=[symbol],
-        daily_loss_cap_usd=1_000_000.0,
-        min_confidence=0.0,
+    cfg = AppConfig(
+        llm=LLMConfig(provider="fake", model="fake-paper"),
+        venue=VenueConfig(name="paper", testnet=True),
+        risk=RiskConfig(
+            max_notional_usd=1_000_000.0,
+            max_leverage=10.0,
+            symbol_allowlist=[symbol],
+            daily_loss_cap_usd=1_000_000.0,
+            min_confidence=0.0,
+        ),
+        run=RunConfig(symbols=[symbol], dry_run=True, live=False),
+        credentials=CredentialsConfig(live=False),
     )
 
-    # Use an in-memory HMAC secret; the scenario does not touch the credential store.
+    # Use an in-memory HMAC secret and a tmp audit log; the scenario does not
+    # touch the user's credential store or audit history.
     responsible_secret = os.urandom(32)
+    with tempfile.TemporaryDirectory(prefix="dex-ai-paper-") as tmpdir:
+        audit_path = Path(tmpdir) / "audit.jsonl"
+        audit = AuditLog(path=audit_path)
 
-    audit = AuditLog()
+        loop_obj = TradingLoop(
+            config=cfg,
+            dex_live=paper_adapter,
+            dex_paper=paper_adapter,
+            llm=llm,
+            audit=audit,
+            responsible_secret=responsible_secret,
+        )
 
-    analyst = AnalystAgent(llm=llm, model="fake-paper")
-    reviewer = ReviewerAgent(llm=llm, model="fake-paper")
-    responsible = ResponsibleAgent(
-        llm=llm,
-        risk_limits=risk_limits,
-        responsible_secret=responsible_secret,
-        audit=audit,
-        model="fake-paper",
+        asyncio.run(loop_obj.run_cycle(symbol))
+
+        fill = _latest_event_payload(audit_path, "executor_paper_fill")
+
+    if fill is None:
+        console.print("[yellow]Paper cycle ended without an executor fill.[/yellow]")
+        return
+
+    trade = fill.get("trade", {}) if isinstance(fill, dict) else {}
+    side = trade.get("side") if isinstance(trade, dict) else None
+    console.print(
+        f"[green]PAPER FILL:[/green] symbol={symbol} side={side} "
+        f"size={fill.get('filled_size')} avg_price={fill.get('avg_price')} "
+        f"status={fill.get('status')} decision_id={fill.get('decision_id')}"
     )
-    executor = ExecutorAgent(
-        dex=paper_adapter,
-        responsible_secret=responsible_secret,
-        is_live=False,
-        audit=audit,
-    )
 
-    async def _run() -> None:
-        ticker = Ticker(
-            symbol=symbol,
-            mid=mark_price,
-            bid=mark_price,
-            ask=mark_price,
-            ts=datetime.now(tz=UTC),
-        )
-        ctx = AgentContext(
-            markets=await paper_adapter.get_markets(),
-            tickers={symbol: ticker},
-            positions=await paper_adapter.get_positions(),
-            balances=await paper_adapter.get_balances(),
-            history=[],
-            notes="paper scenario",
-        )
-        audit.append("cycle_start", {"symbol": symbol, "live": False})
 
-        proposed = await analyst.run(ctx, default_symbol=symbol)
-        audit.append("analyst", {"trade": proposed.model_dump(mode="json")})
-        if proposed.size == 0:
-            audit.append("no_trade", {"reason": "analyst_hold"})
-            audit.append("cycle_complete", {"symbol": symbol, "outcome": "hold"})
-            console.print("[yellow]Analyst held; no order placed.[/yellow]")
-            return
-
-        reviewed = await reviewer.run(proposed, ctx)
-        audit.append(
-            "reviewer",
-            {"verdict": reviewed.verdict, "critique": reviewed.critique},
-        )
-
-        approved = await responsible.run(reviewed, ctx)
-        if approved is None:
-            audit.append("cycle_complete", {"symbol": symbol, "outcome": "no_order"})
-            console.print("[yellow]Responsible vetoed; no order placed.[/yellow]")
-            return
-
-        report = await executor.run(approved, ctx)
-        audit.append(
-            "cycle_complete",
-            {"symbol": symbol, "outcome": "placed", "decision_id": str(approved.decision_id)},
-        )
-
-        console.print(
-            f"[green]PAPER FILL:[/green] symbol={symbol} side={approved.trade.side} "
-            f"size={report.filled_size} avg_price={report.avg_price} "
-            f"status={report.status} decision_id={approved.decision_id}"
-        )
-
-    asyncio.run(_run())
+def _latest_event_payload(audit_path: Path, event: str) -> dict[str, Any] | None:
+    """Return the payload of the most recent ``event`` record in ``audit_path``."""
+    if not audit_path.exists():
+        return None
+    latest: dict[str, Any] | None = None
+    for line in audit_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("event") == event:
+            payload = record.get("payload")
+            if isinstance(payload, dict):
+                latest = payload
+    return latest
 
 
 def _default_scenario_path() -> Path:

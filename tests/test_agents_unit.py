@@ -145,7 +145,13 @@ async def test_responsible_approve_signs_and_verifies(tmp_path: Path) -> None:
 
     assert approved is not None
     assert approved.responsible_id == "responsible:fake"
-    expected_sig = sign_trade(secret, approved.decision_id, approved.trade, approved.approved_at)
+    expected_sig = sign_trade(
+        secret,
+        approved.decision_id,
+        approved.trade,
+        approved.approved_at,
+        approved.responsible_id,
+    )
     assert approved.signature == expected_sig
 
     # Round-trip through the executor's verifier.
