@@ -1,0 +1,84 @@
+# Local integration stack for `make dev`.
+#
+# Bring everything up with:
+#   docker compose up --build
+#
+# Notes:
+#   * The client is served by nginx on container port 80 and published
+#     as 5173 to match the Vite dev-server port the rest of the docs use.
+#   * The server reaches redis/postgres by service name; values are dev
+#     defaults. Production wiring lives in infrastructure/kubernetes/.
+#   * postgres has a healthcheck so the server's depends_on can wait
+#     for an actually-ready DB instead of just a running container.
+
+name: crypto-arena-survivors
+
+services:
+  client:
+    build:
+      context: ./client
+    image: cas-client:dev
+    container_name: cas-client
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./server
+    image: cas-server:dev
+    container_name: cas-server
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: "info"
+      CORS_ALLOWED_ORIGINS: "http://localhost:5173"
+      # APP_ENV=dev is the only mechanism that allows the server to
+      # boot without an explicit JWT_SECRET (it falls back to the
+      # well-known dev secret in config.devJWTSecret). Setting it
+      # explicitly here makes it impossible for a developer to copy
+      # this compose file, flip APP_ENV to production, and accidentally
+      # boot with a known-public signing secret.
+      APP_ENV: "dev"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_URL: "postgres://cas:devpw@postgres:5432/cas?sslmode=disable"
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: cas-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cas-postgres
+    environment:
+      POSTGRES_DB: "cas"
+      POSTGRES_USER: "cas"
+      POSTGRES_PASSWORD: "devpw"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cas -d cas"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  postgres-data:

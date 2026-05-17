@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cas-server
+  namespace: crypto-arena
+  labels:
+    app.kubernetes.io/name: cas-server
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: cas
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cas-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cas-server
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: cas
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/simple-org/cas-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: APP_ENV
+              # Anything other than "dev" makes config.Load refuse to
+              # boot if JWT_SECRET is unset, so a misconfigured cluster
+              # cannot accidentally sign tokens with the dev fallback.
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: CORS_ALLOWED_ORIGINS
+              value: "https://play.crypto-arena.example.com"
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cas-server-secrets
+                  key: redis-url
+                  optional: true
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cas-server-secrets
+                  key: postgres-url
+                  optional: true
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cas-server-secrets
+                  key: jwt-secret
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cas-server
+  namespace: crypto-arena
+  labels:
+    app.kubernetes.io/name: cas-server
+    app.kubernetes.io/part-of: cas
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cas-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

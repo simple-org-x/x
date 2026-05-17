@@ -1,0 +1,15 @@
+# Build outputs and deps that the Dockerfile rebuilds inside the image.
+node_modules
+dist
+.vite
+coverage
+*.tsbuildinfo
+
+# Editor / OS junk
+.DS_Store
+.idea
+.vscode
+
+# Dockerfile + dotfiles aren't part of the runtime image.
+Dockerfile
+.dockerignore

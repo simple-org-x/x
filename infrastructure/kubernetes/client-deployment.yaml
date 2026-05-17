@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cas-client
+  namespace: crypto-arena
+  labels:
+    app.kubernetes.io/name: cas-client
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: cas
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cas-client
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cas-client
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: cas
+    spec:
+      containers:
+        - name: nginx
+          image: ghcr.io/simple-org/cas-client:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cas-client
+  namespace: crypto-arena
+  labels:
+    app.kubernetes.io/name: cas-client
+    app.kubernetes.io/part-of: cas
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cas-client
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

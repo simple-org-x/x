@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.vite/
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Playwright test reports
+playwright-report/
+test-results/
+*-report/
+*-results/
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Server (Go) build output
+server/bin/
+
+# Smart contract artifacts
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+contracts/deployments/
