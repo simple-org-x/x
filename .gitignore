@@ -12,6 +12,12 @@ build/
 # Test coverage
 coverage/
 
+# Playwright test reports
+playwright-report/
+test-results/
+*-report/
+*-results/
+
 # Logs
 *.log
 
