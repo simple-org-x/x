@@ -57,8 +57,7 @@ export default function BossBestiary() {
           <button onClick={() => setScreen('menu')}>← {t('bossBestiary.back')}</button>
         </div>
         <p style={{ color: 'var(--fg-soft)', fontSize: 13, marginBottom: 18 }}>
-          Bosses spawn every <strong>10 player levels</strong> (Lv 10, 20, 30…). The roster cycles
-          through these four archetypes; each subsequent encounter is significantly stronger.
+          {t('bossBestiary.description')}
         </p>
 
         <div style={{ display: 'grid', gap: 14 }}>
@@ -112,7 +111,7 @@ export default function BossBestiary() {
 
                 {/* Skills */}
                 <div style={{ fontSize: 12, color: 'var(--fg-soft)', marginBottom: 4 }}>
-                  Skills:
+                  {t('bossBestiary.skills')}:
                 </div>
                 <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
                   {skills.map((s) => (

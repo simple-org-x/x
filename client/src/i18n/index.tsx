@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import en from './en.json';
 import id from './id.json';
 
@@ -16,9 +16,13 @@ interface I18nContextType {
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 function getLanguageFromStorage(): Language {
-  if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('language');
-    if (stored === 'en' || stored === 'id') return stored;
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('language');
+      if (stored === 'en' || stored === 'id') return stored;
+    } catch (e) {
+      // localStorage not available in test environment
+    }
   }
   return 'en';
 }
@@ -28,7 +32,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-    localStorage.setItem('language', lang);
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('language', lang);
+      } catch (e) {
+        // localStorage not available in test environment
+      }
+    }
   }, []);
 
   const t = useCallback((key: string): string => {

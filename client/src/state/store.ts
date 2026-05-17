@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { CharacterId } from '@/data/characters';
-import type { WeaponId } from '@/data/weapons';
 import type { UpgradeDef } from '@/data/upgrades';
 
 export type Screen =

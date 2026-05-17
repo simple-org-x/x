@@ -1,4 +1,4 @@
-import { UPGRADES, TIER_BASE_WEIGHT } from '@/data/upgrades';
+import { UPGRADES } from '@/data/upgrades';
 import { useAppStore } from '@/state/store';
 import { useI18n } from '@/i18n';
 
@@ -60,7 +60,7 @@ export default function SkillList() {
       <div className="cas-card" style={{ maxWidth: 700, maxHeight: '85vh', overflow: 'auto' }}>
         <h2>{t('skillList.title')}</h2>
         <p style={{ color: 'var(--fg-soft)', marginBottom: 16, fontSize: 13 }}>
-          Each level-up draw selects 3 random cards. Drop chances shown below.
+          {t('skillList.description')}
         </p>
 
         {(['common', 'rare', 'epic', 'legendary'] as const).map((tier) => {

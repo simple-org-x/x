@@ -32,7 +32,7 @@ export default function Leaderboard() {
                   <td style={{ padding: 8, color: 'var(--fg-soft)' }}>{i + 1}</td>
                   <td style={{ padding: 8 }}>
                     <span style={{ color: r.victory ? '#5cf7c4' : '#ff9466' }}>
-                      {r.username || 'Anonymous'}
+                      {r.username || t('leaderboard.anonymous')}
                     </span>
                     <span style={{ color: 'var(--fg-soft)', fontSize: 11, marginLeft: 8 }}>
                       ({r.character})

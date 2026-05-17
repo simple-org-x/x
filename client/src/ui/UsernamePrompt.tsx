@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/state/store';
 import { useI18n } from '@/i18n';
 
@@ -6,11 +6,12 @@ export default function UsernamePrompt() {
   const existingUsername = useAppStore((s) => s.username);
   const [input, setInput] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const setUsername = useAppStore((s) => s.setUsername);
   const setScreen = useAppStore((s) => s.setScreen);
   const { t } = useI18n();
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize input with existing username
   useEffect(() => {
     if (existingUsername) {
       setInput(existingUsername);
@@ -29,56 +30,41 @@ export default function UsernamePrompt() {
     setScreen('playing');
   };
 
-  // If user has existing username and hasn't started editing, show quick continue option
   const hasExisting = existingUsername.length > 0;
 
   return (
     <div className="cas-overlay">
-      <div className="cas-card" style={{ maxWidth: 400 }}>
-        <h2>{t('usernamePrompt.title')}</h2>
-        <p style={{ color: 'var(--fg-soft)', marginBottom: 16 }}>
-          Your name will appear below your character and on the leaderboard.
+      <div className="cas-username-card">
+        <div className="cas-username-header">
+          <div className="cas-username-label">{t('usernamePrompt.callsign')}</div>
+          <div className="cas-username-title">{t('usernamePrompt.identify')}</div>
+        </div>
+        
+        <p className="cas-username-hint">
+          {t('usernamePrompt.hint')}
         </p>
         
         {hasExisting && !isEditing ? (
           <div>
-            <div style={{ 
-              padding: '12px 16px', 
-              background: 'rgba(92,247,196,0.1)', 
-              border: '1px solid rgba(92,247,196,0.3)',
-              borderRadius: 8,
-              marginBottom: 16,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--fg-soft)', marginBottom: 4 }}>Current username</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--accent)' }}>{existingUsername}</div>
-              </div>
+            <div className="cas-username-plaque">
+              <div className="cas-plaque-label">{t('usernamePrompt.currentCallsign')}</div>
+              <div className="cas-plaque-name">{existingUsername}</div>
+              <div className="cas-plaque-glow"></div>
               <button
                 type="button"
                 onClick={() => setIsEditing(true)}
-                style={{ 
-                  padding: '6px 12px', 
-                  fontSize: 12,
-                  background: 'transparent',
-                  border: '1px solid rgba(92,247,196,0.4)',
-                  color: 'var(--accent)',
-                  borderRadius: 4,
-                  cursor: 'pointer'
-                }}
+                className="cas-plaque-edit"
               >
-                Change
+                {t('usernamePrompt.modify')}
               </button>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button onClick={handleUseExisting} className="cas-btn cas-btn-primary" style={{ flex: 1 }}>
+            <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
+              <button onClick={handleUseExisting} className="cas-username-btn cas-username-btn-primary">
                 {t('usernamePrompt.continue')}
               </button>
               <button
                 type="button"
-                className="cas-btn"
+                className="cas-username-btn"
                 onClick={() => setScreen('menu')}
               >
                 {t('leaderboard.back')}
@@ -87,23 +73,39 @@ export default function UsernamePrompt() {
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={t('usernamePrompt.placeholder')}
-              maxLength={20}
-              autoFocus
-              className="cas-input"
-              style={{ width: '100%', marginBottom: 16 }}
-            />
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button type="submit" className="cas-btn cas-btn-primary" disabled={input.trim().length === 0}>
-                {hasExisting ? 'Save & Continue' : t('usernamePrompt.continue')}
+            <div className={`cas-terminal-input ${isFocused ? 'cas-terminal-input-focused' : ''}`}>
+              <div className="cas-terminal-prompt">&gt;</div>
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                placeholder={t('usernamePrompt.placeholder')}
+                maxLength={20}
+                autoFocus
+                className="cas-terminal-field"
+              />
+              <div className="cas-terminal-cursor"></div>
+            </div>
+            <div className="cas-terminal-meta">
+              <span>{input.length}{t('usernamePrompt.charCount')}</span>
+              <span className="cas-terminal-status">
+                {input.trim().length > 0 ? t('usernamePrompt.ready') : t('usernamePrompt.awaiting')}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+              <button 
+                type="submit" 
+                className="cas-username-btn cas-username-btn-primary" 
+                disabled={input.trim().length === 0}
+              >
+                {hasExisting ? t('usernamePrompt.saveAndDeploy') : t('usernamePrompt.continue')}
               </button>
               <button
                 type="button"
-                className="cas-btn"
+                className="cas-username-btn"
                 onClick={() => {
                   if (hasExisting && isEditing) {
                     setIsEditing(false);
@@ -113,7 +115,7 @@ export default function UsernamePrompt() {
                   }
                 }}
               >
-                {hasExisting && isEditing ? 'Cancel' : t('leaderboard.back')}
+                {hasExisting && isEditing ? t('usernamePrompt.cancel') : t('leaderboard.back')}
               </button>
             </div>
           </form>

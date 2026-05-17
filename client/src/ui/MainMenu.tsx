@@ -130,7 +130,7 @@ export default function MainMenu() {
             <span className="cas-title-main">{t('game.title')}</span>
           </div>
           <p className="cas-main-menu-subtitle">
-            Phase 1 prototype &bull; {selected}
+            {t('mainMenu.phase1')} &bull; {selected}
           </p>
           <div className="cas-row" style={{ marginTop: 24, flexDirection: 'column', alignItems: 'stretch' }}>
             <button onClick={onPlay} aria-label="Play" className="cas-play-btn">{t('mainMenu.play')}</button>
@@ -140,7 +140,7 @@ export default function MainMenu() {
             <button onClick={() => setScreen('boss-bestiary')}>{t('mainMenu.bossBestiary')}</button>
             <button onClick={onLeaderboard}>{t('mainMenu.leaderboard')}</button>
             <button onClick={toggleLanguage}>{t('mainMenu.language')}: {language.toUpperCase()}</button>
-            <button onClick={onConnect}>{t('mainMenu.connectWallet')} <span style={{ opacity: 0.5 }}>(stub)</span></button>
+            <button onClick={onConnect}>{t('mainMenu.connectWallet')} <span style={{ opacity: 0.5 }}>{t('mainMenu.stub')}</span></button>
           </div>
           <p className="cas-main-menu-hint">{t('mainMenu.hint')}</p>
         </div>

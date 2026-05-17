@@ -90,7 +90,6 @@ export class MainScene extends Phaser.Scene {
   private events_!: GameEvents;
   private characterId: CharacterId = 'potato-soldier';
   private godMode = false;
-  private oneHitMode = false;
   private speedMultiplier = 1;
 
   constructor() {
@@ -220,11 +219,13 @@ export class MainScene extends Phaser.Scene {
       },
       killBoss: () => {
         if (this.bosses.size === 0) return;
-        const firstBossId = this.bosses.keys().next().value;
-        const bossState = this.bossStates.get(firstBossId);
-        if (bossState) {
-          bossState.hp = 0;
-          this.killBoss(firstBossId);
+        const firstBossId = this.bosses.keys().next().value as number | undefined;
+        if (firstBossId !== undefined) {
+          const bossState = this.bossStates.get(firstBossId);
+          if (bossState) {
+            bossState.hp = 0;
+            this.killBoss(firstBossId);
+          }
         }
       },
       toggleGodMode: () => {

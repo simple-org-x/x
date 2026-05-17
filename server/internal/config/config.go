@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"strconv"
@@ -12,11 +14,15 @@ import (
 	"time"
 )
 
-// devJWTSecret is the dev-only fallback signing secret. Load returns
-// an error when APP_ENV != "dev" (or unset) and JWT_SECRET is empty,
-// so production deployments cannot accidentally boot signing tokens
-// with this string.
-const devJWTSecret = "dev-only-insecure-secret-change-me"
+// generateRandomSecret creates a cryptographically random hex-encoded secret.
+// Used for dev-mode JWT signing when JWT_SECRET is not explicitly set.
+func generateRandomSecret(bytes int) ([]byte, error) {
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	return []byte(hex.EncodeToString(b)), nil
+}
 
 // Config is the typed view of all environment-driven settings.
 type Config struct {
@@ -89,8 +95,13 @@ func Load() (Config, error) {
 	case secretSet && rawSecret != "":
 		jwtSecret = []byte(rawSecret)
 	case appEnv == "dev":
-		// Permissive dev fallback; tests rely on this being stable.
-		jwtSecret = []byte(devJWTSecret)
+		// Generate a unique random secret for this dev session.
+		// Tests that need a stable secret should set JWT_SECRET explicitly.
+		var err error
+		jwtSecret, err = generateRandomSecret(32)
+		if err != nil {
+			return Config{}, err
+		}
 	default:
 		return Config{}, ErrJWTSecretRequired
 	}

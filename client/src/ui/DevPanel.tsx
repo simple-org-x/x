@@ -85,7 +85,7 @@ export default function DevPanel() {
           ×
         </button>
       </div>
-      <div className="cas-dev-hint">Press <kbd>`</kbd> to toggle</div>
+      <div className="cas-dev-hint">{t('devPanel.toggleHint')} <kbd>`</kbd> {t('devPanel.toggleKey')}</div>
 
       <div className="cas-dev-section">
         <div className="cas-dev-section-title">{t('devPanel.xpLevel')}</div>
@@ -112,8 +112,8 @@ export default function DevPanel() {
           </button>
         </div>
         <div className="cas-dev-mini-hint">
-          Spawn → see entrance animation, HP bar, name.<br />
-          Kill → see celebration + particles.
+          {t('devPanel.spawnHint')}<br />
+          {t('devPanel.killHint')}
         </div>
       </div>
 
@@ -128,7 +128,7 @@ export default function DevPanel() {
             }}
             className={god ? 'cas-dev-btn-active' : ''}
           >
-            {t('devPanel.godMode')}: {god ? 'ON' : 'OFF'}
+            {t('devPanel.godMode')}: {god ? t('devPanel.godModeOn') : t('devPanel.godModeOff')}
           </button>
         </div>
       </div>
@@ -160,7 +160,7 @@ export default function DevPanel() {
           </button>
         </div>
         <div className="cas-dev-mini-hint">
-          Grant legendary skills to test activation.
+          {t('devPanel.legendaryHint')}
         </div>
       </div>
     </div>

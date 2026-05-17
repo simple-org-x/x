@@ -22,7 +22,6 @@ export default function App() {
   const coins = useAppStore((s) => s.coins);
   const session = wallet.getSession();
 
-  const isPlaying = screen === 'playing';
   const isGameActive = screen === 'playing' || screen === 'paused';
 
   return (

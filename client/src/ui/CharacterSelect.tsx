@@ -26,11 +26,11 @@ export default function CharacterSelect() {
             >
               <strong>
                 {c.name}
-                {c.comingSoon ? <span className="cas-soon-pill">Coming soon</span> : null}
+                {c.comingSoon ? <span className="cas-soon-pill">{t('characterSelect.comingSoon')}</span> : null}
               </strong>
               <p style={{ color: 'var(--fg-soft)', marginTop: 8 }}>{c.tagline}</p>
               <div style={{ fontSize: 12, color: 'var(--fg-soft)' }}>
-                HP {c.stats.maxHp} &nbsp;|&nbsp; SPD {c.stats.moveSpeed} &nbsp;|&nbsp; Weapon: {c.startingWeapon}
+                {t('characterSelect.hp')} {c.stats.maxHp} &nbsp;|&nbsp; {t('characterSelect.spd')} {c.stats.moveSpeed} &nbsp;|&nbsp; {t('characterSelect.weapon')}: {c.startingWeapon}
               </div>
             </button>
           ))}

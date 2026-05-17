@@ -50,7 +50,9 @@ func TestLoad_DevFallbackUsesDevSecret(t *testing.T) {
 			cfg, err := config.Load()
 			require.NoError(t, err)
 			assert.Equal(t, "dev", cfg.AppEnv)
-			assert.Equal(t, "dev-only-insecure-secret-change-me", string(cfg.JWTSecret))
+			// Dev mode generates a random secret when JWT_SECRET is not set
+			assert.NotEmpty(t, cfg.JWTSecret)
+			assert.Greater(t, len(cfg.JWTSecret), 0)
 		},
 	)
 }

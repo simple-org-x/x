@@ -60,6 +60,14 @@ func main() {
 		"rate_limit_rps", cfg.RateLimitRPS,
 	)
 
+	// Warn if CORS wildcard is enabled in production
+	if cfg.AppEnv != "dev" && len(cfg.AllowedOrigins) == 1 && cfg.AllowedOrigins[0] == "*" {
+		logger.Warn("cors_wildcard_enabled",
+			"msg", "CORS wildcard (*) is enabled in non-dev environment. This allows any origin to access the API.",
+			"env", cfg.AppEnv,
+		)
+	}
+
 	// Graceful shutdown: SIGINT/SIGTERM trigger Shutdown(ctx) with a
 	// 10s budget and EndAll on the match runner.
 	idleClosed := make(chan struct{})

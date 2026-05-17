@@ -17,7 +17,7 @@ describe('upgrades data table', () => {
   it('every upgrade has a positive weight and a known effect', () => {
     for (const u of UPGRADES) {
       expect(u.weight).toBeGreaterThan(0);
-      expect(['stat', 'build']).toContain(u.effect.kind);
+      expect(['stat', 'build', 'legendary']).toContain(u.effect.kind);
     }
   });
 });

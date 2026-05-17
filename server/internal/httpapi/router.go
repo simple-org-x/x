@@ -76,12 +76,13 @@ func NewDeps(cfg config.Config, logger *slog.Logger) Deps {
 
 // Build assembles the chi router used by both the production server
 // and the smoke tests. The middleware stack (in order) is: request ID,
-// structured logger, panic recovery, CORS, per-IP rate limiter.
+// structured logger, panic recovery, security headers, CORS, per-IP rate limiter.
 func Build(d Deps) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger(d.Logger))
 	r.Use(middleware.Recover(d.Logger))
+	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.CORS(d.Config.AllowedOrigins))
 	r.Use(d.RateLimiter.Middleware)
 	if d.Metrics != nil {
