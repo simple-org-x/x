@@ -1,8 +1,10 @@
 import { UPGRADES, TIER_BASE_WEIGHT } from '@/data/upgrades';
 import { useAppStore } from '@/state/store';
+import { useI18n } from '@/i18n';
 
 export default function SkillList() {
   const setScreen = useAppStore((s) => s.setScreen);
+  const { t } = useI18n();
 
   const tierWeights = {
     common: 0,
@@ -49,10 +51,14 @@ export default function SkillList() {
     return ((upgradeWeight / totalWeight) * 100).toFixed(2);
   };
 
+  const getTierName = (tier: string) => {
+    return t(`skillList.tier${tier.charAt(0).toUpperCase() + tier.slice(1)}` as any);
+  };
+
   return (
     <div className="cas-overlay">
       <div className="cas-card" style={{ maxWidth: 700, maxHeight: '85vh', overflow: 'auto' }}>
-        <h2>Available Skills</h2>
+        <h2>{t('skillList.title')}</h2>
         <p style={{ color: 'var(--fg-soft)', marginBottom: 16, fontSize: 13 }}>
           Each level-up draw selects 3 random cards. Drop chances shown below.
         </p>
@@ -74,10 +80,10 @@ export default function SkillList() {
                 }}
               >
                 <h3 style={{ margin: 0, color: getTierColor(tier), textTransform: 'capitalize' }}>
-                  {tier}
+                  {getTierName(tier)}
                 </h3>
                 <span style={{ color: 'var(--fg-soft)', fontSize: 12 }}>
-                  {tierUpgrades.length} skills • {tierChance}% tier drop rate
+                  {tierUpgrades.length} skills • {tierChance}% {t('skillList.tierChance')}
                 </span>
               </div>
 
@@ -100,7 +106,7 @@ export default function SkillList() {
                       {u.description}
                     </div>
                     <div style={{ color: '#ffd24a', fontSize: 11 }}>
-                      Drop: {getUpgradeDropChance(u.weight)}%
+                      {t('skillList.dropChance')}: {getUpgradeDropChance(u.weight)}%
                     </div>
                   </div>
                 ))}
@@ -111,7 +117,7 @@ export default function SkillList() {
 
         <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
           <button className="cas-btn cas-btn-primary" onClick={() => setScreen('menu')}>
-            Back to Menu
+            {t('skillList.back')}
           </button>
         </div>
       </div>

@@ -239,6 +239,24 @@ export class MainScene extends Phaser.Scene {
           void need;
         }
       },
+      grantFreezeBlast: () => {
+        useAppStore.getState().addLegendarySkill({
+          id: 'freeze-blast',
+          name: 'Freeze Blast',
+          description: 'Freeze all non-boss enemies for 3-5 seconds',
+          color: 0x66ddff,
+          charges: 1,
+        });
+      },
+      grantPurgeBolt: () => {
+        useAppStore.getState().addLegendarySkill({
+          id: 'purge-bolt',
+          name: 'Purge Bolt',
+          description: 'Instantly kill all non-boss enemies',
+          color: 0xffd24a,
+          charges: 1,
+        });
+      },
     };
   }
 

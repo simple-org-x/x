@@ -57,6 +57,33 @@ make dev-server     # Go API + WebSocket server on :8080
 The Makefile is tolerant: targets guard each step with file-existence checks
 so the skeleton (without yet-to-land subprojects) still exits cleanly.
 
+## Tester Panel
+
+A built-in developer/tester panel is available for debugging and testing game mechanics.
+
+### Enable/Disable Tester Panel
+
+The tester panel is always compiled into the game build but can be toggled at runtime:
+
+**Toggle visibility during gameplay**: Press the **backtick key** (``` ` ``` or ``` ~ ```, located above Tab on most keyboards) to show/hide the floating tester panel.
+
+**Completely disable the tester feature**:
+1. To remove the panel UI but keep dev hooks (`window.__cas_dev`): Comment out the DevPanel import and render in `client/src/App.tsx`:
+   ```typescript
+   // import DevPanel from '@/ui/DevPanel';
+   // {isGameActive ? <DevPanel /> : null}
+   ```
+2. To remove both panel and dev hooks: Comment out the dev hooks registration in `client/src/game/scenes/MainScene.ts`:
+   ```typescript
+   // this.exposeDevHooks();
+   ```
+
+**When enabled**, the tester panel provides:
+- **XP/Level controls**: Grant XP, force level-ups, jump to specific levels
+- **Boss controls**: Spawn boss immediately, kill current boss
+- **Player controls**: Heal to full health, toggle god mode (invincibility)
+- **Game speed**: Adjust simulation speed (0.5×, 1×, 2×, 4×)
+
 ## Design pillars
 
 1. **Server-authoritative gameplay** -- even the single-player Phase 1 client

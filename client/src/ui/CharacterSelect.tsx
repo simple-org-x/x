@@ -1,15 +1,17 @@
 import { CHARACTERS } from '@/data/characters';
 import { useAppStore } from '@/state/store';
+import { useI18n } from '@/i18n';
 
 export default function CharacterSelect() {
   const selected = useAppStore((s) => s.selectedCharacter);
   const setSelected = useAppStore((s) => s.setSelectedCharacter);
   const setScreen = useAppStore((s) => s.setScreen);
+  const { t } = useI18n();
 
   return (
     <div className="cas-overlay">
       <div className="cas-overlay-card" style={{ minWidth: 'min(720px, 92vw)' }}>
-        <h2>Choose a character</h2>
+        <h2>{t('characterSelect.title')}</h2>
         <div className="cas-character-list">
           {CHARACTERS.map((c) => (
             <button
@@ -34,8 +36,10 @@ export default function CharacterSelect() {
           ))}
         </div>
         <div className="cas-row">
-          <button onClick={() => setScreen('menu')}>Back</button>
-          <button onClick={() => setScreen('playing')}>Start Run</button>
+          <button onClick={() => setScreen('menu')}>{t('characterSelect.back')}</button>
+          <button onClick={() => setScreen('username')} disabled={!selected}>
+            {t('usernamePrompt.continue')}
+          </button>
         </div>
       </div>
     </div>

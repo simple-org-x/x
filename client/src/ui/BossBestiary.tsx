@@ -1,5 +1,6 @@
 import { BOSS_ROSTER, makeScaledBoss, type BossDef } from '@/game/systems/Boss';
 import { useAppStore } from '@/state/store';
+import { useI18n } from '@/i18n';
 
 function hexToCss(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
@@ -11,21 +12,21 @@ interface SkillDescriptor {
   icon: string;
 }
 
-function getSkills(def: BossDef): SkillDescriptor[] {
+function getSkills(def: BossDef, t: (key: string) => string): SkillDescriptor[] {
   return [
     {
       icon: '◎',
-      name: 'AoE Telegraph',
+      name: t('bossBestiary.skillAoe'),
       detail: `Marks a ${def.aoeRadius}px radius zone for ${(def.aoeTelegraphMs / 1000).toFixed(1)}s, then detonates for ${def.damage} dmg.`,
     },
     {
       icon: '✦',
-      name: 'Bullet Ring',
+      name: t('bossBestiary.skillBulletRing'),
       detail: `Fires ${def.ringBulletCount} bullets outward @ ${def.ringBulletSpeed} speed, ${def.ringBulletDamage} dmg each.`,
     },
     {
       icon: '➤',
-      name: 'Dash (Enraged)',
+      name: t('bossBestiary.skillDash'),
       detail: `Below 50% HP, charges at player @ ${def.dashSpeed} speed for ${(def.dashDurationMs / 1000).toFixed(1)}s.`,
     },
   ];
@@ -33,6 +34,7 @@ function getSkills(def: BossDef): SkillDescriptor[] {
 
 export default function BossBestiary() {
   const setScreen = useAppStore((s) => s.setScreen);
+  const { t } = useI18n();
 
   // Show scaling preview at bosses #1, #2, #3 to illustrate progression
   const sampleScales = [1, 2, 3, 5, 10];
@@ -51,8 +53,8 @@ export default function BossBestiary() {
             marginBottom: 4,
           }}
         >
-          <h2 style={{ margin: 0 }}>Boss Bestiary</h2>
-          <button onClick={() => setScreen('menu')}>← Back</button>
+          <h2 style={{ margin: 0 }}>{t('bossBestiary.title')}</h2>
+          <button onClick={() => setScreen('menu')}>← {t('bossBestiary.back')}</button>
         </div>
         <p style={{ color: 'var(--fg-soft)', fontSize: 13, marginBottom: 18 }}>
           Bosses spawn every <strong>10 player levels</strong> (Lv 10, 20, 30…). The roster cycles
@@ -62,7 +64,7 @@ export default function BossBestiary() {
         <div style={{ display: 'grid', gap: 14 }}>
           {BOSS_ROSTER.map((def) => {
             const cssColor = hexToCss(def.color);
-            const skills = getSkills(def);
+            const skills = getSkills(def, t);
             return (
               <div
                 key={def.id}
@@ -101,11 +103,11 @@ export default function BossBestiary() {
                     fontSize: 12,
                   }}
                 >
-                  <Stat label="Base HP" value={def.hp.toLocaleString()} hot />
-                  <Stat label="Contact Dmg" value={def.damage} />
-                  <Stat label="Speed" value={def.speed} />
-                  <Stat label="XP Drop" value={def.xp} />
-                  <Stat label="Coin Drop" value={def.coins} />
+                  <Stat label={t('bossBestiary.baseHp')} value={def.hp.toLocaleString()} hot />
+                  <Stat label={t('bossBestiary.contactDmg')} value={def.damage} />
+                  <Stat label={t('bossBestiary.speed')} value={def.speed} />
+                  <Stat label={t('bossBestiary.xpDrop')} value={def.xp} />
+                  <Stat label={t('bossBestiary.coinDrop')} value={def.coins} />
                 </div>
 
                 {/* Skills */}
@@ -200,11 +202,7 @@ export default function BossBestiary() {
             lineHeight: 1.5,
           }}
         >
-          <strong style={{ color: 'var(--accent)' }}>Scaling formula:</strong> Each encounter
-          multiplies HP / XP / coins by <code>1 + (n−1) × 0.6</code>, damage by{' '}
-          <code>1 + (n−1) × 0.3</code>, ring bullets by <code>1 + (n−1) × 0.25</code>, and adds{' '}
-          <code>(n−1) × 2</code> bullets to the ring. Boss <strong>n=1</strong> is the lightest,
-          subsequent ones grow ~+60% HP per encounter.
+          <strong style={{ color: 'var(--accent)' }}>{t('bossBestiary.scalingFormula')}</strong>
         </div>
       </div>
     </div>

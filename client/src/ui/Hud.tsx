@@ -1,4 +1,5 @@
 import { useAppStore } from '@/state/store';
+import { useI18n } from '@/i18n';
 
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
@@ -12,6 +13,7 @@ export default function Hud() {
   const activeSkills = useAppStore((s) => s.activeSkills);
   const legendarySkills = useAppStore((s) => s.legendarySkills);
   const useLegendary = useAppStore((s) => s.useLegendarySkill);
+  const { t } = useI18n();
 
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const xpPct = Math.max(0, Math.min(100, (hud.xp / hud.xpForNext) * 100));
@@ -34,14 +36,14 @@ export default function Hud() {
           <div>Time: {fmtTime(hud.timeSec)}</div>
           <div>Kills: {hud.kills}</div>
           {hud.bossKills > 0 ? <div>Bosses: {hud.bossKills}</div> : null}
-          {bossActive ? <div style={{ color: 'var(--accent-hot)' }}>BOSS ACTIVE</div> : null}
+          {bossActive ? <div style={{ color: 'var(--accent-hot)' }}>{t('hud.bossActive')}</div> : null}
         </div>
       </div>
       <div className="cas-hud-bottom">
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <div className="cas-skills-sidebar">
             {activeSkills.length > 0 ? (
-              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>Active Skills</div>
+              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>{t('hud.activeSkills')}</div>
             ) : null}
             {activeSkills.map((s) => (
               <div key={s.id} className="cas-skill-chip" data-tier={s.tier}>
@@ -51,7 +53,7 @@ export default function Hud() {
           </div>
           {legendarySkills.length > 0 ? (
             <div className="cas-legendary-skills">
-              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>Legendary</div>
+              <div style={{ fontSize: 11, color: 'var(--fg-soft)', marginBottom: 4 }}>{t('hud.legendarySkills')}</div>
               {legendarySkills.map((ls) => (
                 <button
                   key={ls.id}

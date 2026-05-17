@@ -121,6 +121,7 @@ const defaultHud: HudStats = {
 
 const USERNAME_KEY = 'cas:username';
 const RECORDS_KEY = 'cas:gameRecords';
+const COINS_KEY = 'cas:coins';
 const MAX_RECORDS = 50;
 
 function loadUsername(): string {
@@ -128,6 +129,25 @@ function loadUsername(): string {
     return localStorage.getItem(USERNAME_KEY) ?? '';
   } catch {
     return '';
+  }
+}
+
+function loadCoins(): number {
+  try {
+    const raw = localStorage.getItem(COINS_KEY);
+    if (!raw) return 0;
+    const parsed = parseInt(raw, 10);
+    return isNaN(parsed) ? 0 : parsed;
+  } catch {
+    return 0;
+  }
+}
+
+function persistCoins(coins: number): void {
+  try {
+    localStorage.setItem(COINS_KEY, coins.toString());
+  } catch {
+    // localStorage unavailable - non-fatal
   }
 }
 
@@ -153,7 +173,7 @@ function persistRecords(records: GameRecord[]): void {
 export const useAppStore = create<AppState>((set, get) => ({
   screen: 'menu',
   selectedCharacter: 'potato-soldier',
-  coins: 0,
+  coins: loadCoins(),
   username: loadUsername(),
   hud: defaultHud,
   activeSkills: [],
@@ -178,7 +198,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setHud: (h) => set((state) => ({ hud: { ...state.hud, ...h } })),
   resetHud: () => set({ hud: { ...defaultHud } }),
-  addCoins: (n) => set((state) => ({ coins: state.coins + n })),
+  addCoins: (n) => set((state) => {
+    const next = state.coins + n;
+    persistCoins(next);
+    return { coins: next };
+  }),
   setBossActive: (b) => set({ bossActive: b }),
   addActiveSkill: (skill) =>
     set((state) => {

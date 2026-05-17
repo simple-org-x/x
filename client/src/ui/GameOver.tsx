@@ -1,4 +1,5 @@
 import { useAppStore } from '@/state/store';
+import { useI18n } from '@/i18n';
 
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60);
@@ -14,6 +15,7 @@ export default function GameOver({ victory }: { victory: boolean }) {
   const saveGameRecord = useAppStore((s) => s.saveGameRecord);
   const username = useAppStore((s) => s.username);
   const selectedCharacter = useAppStore((s) => s.selectedCharacter);
+  const { t } = useI18n();
 
   const onPlayAgain = () => {
     resetHud();
@@ -44,23 +46,23 @@ export default function GameOver({ victory }: { victory: boolean }) {
   return (
     <div className="cas-overlay">
       <div className="cas-overlay-card">
-        <h2>{victory ? 'Victory!' : 'You died'}</h2>
+        <h2>{victory ? t('gameOver.victory') : t('gameOver.title')}</h2>
         {summary ? (
           <div className="cas-stats-grid">
-            <div>Time survived</div>
+            <div>{t('gameOver.timeSurvived')}</div>
             <div>{fmtTime(summary.timeSec)}</div>
-            <div>Kills</div>
+            <div>{t('gameOver.enemiesKilled')}</div>
             <div>{summary.kills}</div>
-            <div>Bosses defeated</div>
+            <div>{t('gameOver.bossesDefeated')}</div>
             <div>{(summary as any).bossKills ?? 0}</div>
-            <div>Final level</div>
+            <div>{t('gameOver.levelReached')}</div>
             <div>{summary.level}</div>
           </div>
         ) : null}
         <div className="cas-row">
-          <button onClick={onPlayAgain}>Play Again</button>
-          <button onClick={onLeaderboard}>Leaderboard</button>
-          <button onClick={onMenu}>Return to Menu</button>
+          <button onClick={onPlayAgain}>{t('gameOver.playAgain')}</button>
+          <button onClick={onLeaderboard}>{t('gameOver.viewLeaderboard')}</button>
+          <button onClick={onMenu}>{t('gameOver.mainMenu')}</button>
         </div>
       </div>
     </div>
